@@ -8,6 +8,7 @@ interface YouTubePlayerProps {
   onPlay?: () => void;
   onPause?: () => void;
   onEnd?: () => void;
+  onTimeUpdate?: (currentTime: number, duration: number) => void;
 }
 
 declare global {
@@ -17,24 +18,50 @@ declare global {
   }
 }
 
-export const YouTubePlayer = memo(function YouTubePlayer({ videoId, onPlay, onPause, onEnd }: YouTubePlayerProps) {
+export const YouTubePlayer = memo(function YouTubePlayer({ videoId, onPlay, onPause, onEnd, onTimeUpdate }: YouTubePlayerProps) {
   const playerRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [volume, setVolume] = useState([80]);
   const [isReady, setIsReady] = useState(false);
+  const timeUpdateIntervalRef = useRef<NodeJS.Timeout | null>(null);
   
   // Use refs for callbacks to avoid re-creating the player
   const onPlayRef = useRef(onPlay);
   const onPauseRef = useRef(onPause);
   const onEndRef = useRef(onEnd);
+  const onTimeUpdateRef = useRef(onTimeUpdate);
   
   useEffect(() => {
     onPlayRef.current = onPlay;
     onPauseRef.current = onPause;
     onEndRef.current = onEnd;
-  }, [onPlay, onPause, onEnd]);
+    onTimeUpdateRef.current = onTimeUpdate;
+  }, [onPlay, onPause, onEnd, onTimeUpdate]);
+
+  // Time update interval
+  useEffect(() => {
+    if (isPlaying && playerRef.current) {
+      timeUpdateIntervalRef.current = setInterval(() => {
+        if (playerRef.current && onTimeUpdateRef.current) {
+          const currentTime = playerRef.current.getCurrentTime?.() || 0;
+          const duration = playerRef.current.getDuration?.() || 0;
+          onTimeUpdateRef.current(currentTime, duration);
+        }
+      }, 1000);
+    } else {
+      if (timeUpdateIntervalRef.current) {
+        clearInterval(timeUpdateIntervalRef.current);
+        timeUpdateIntervalRef.current = null;
+      }
+    }
+    return () => {
+      if (timeUpdateIntervalRef.current) {
+        clearInterval(timeUpdateIntervalRef.current);
+      }
+    };
+  }, [isPlaying]);
 
   useEffect(() => {
     let player: any = null;
@@ -124,9 +151,9 @@ export const YouTubePlayer = memo(function YouTubePlayer({ videoId, onPlay, onPa
   };
 
   return (
-    <div className="h-full flex flex-col">
-      <div className="relative flex-1 rounded-2xl overflow-hidden bg-foreground/5">
-        <div ref={containerRef} className="absolute inset-0 [&>iframe]:w-full [&>iframe]:h-full" />
+    <div className="w-full h-full">
+      <div className="relative w-full h-full">
+        <div ref={containerRef} className="absolute inset-0 [&>iframe]:!w-full [&>iframe]:!h-full" />
         
         {!isReady && (
           <div className="absolute inset-0 flex items-center justify-center bg-card">

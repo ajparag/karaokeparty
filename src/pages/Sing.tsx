@@ -25,6 +25,8 @@ export default function Sing() {
   const [showCelebration, setShowCelebration] = useState(false);
   const [performanceTime, setPerformanceTime] = useState(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [remainingTime, setRemainingTime] = useState(0);
+  const [videoDuration, setVideoDuration] = useState(0);
   const fullscreenRef = useRef<HTMLDivElement>(null);
   const scoreHistoryRef = useRef<number[]>([]);
   const performanceStartRef = useRef<number | null>(null);
@@ -110,13 +112,20 @@ export default function Sing() {
   }, []);
 
   const handleRhythmData = useCallback((data: { beatStrength: number; consistency: number; pitchAccuracy: number }) => {
-    // Combined score: 50% rhythm + 50% pitch
+    // Combined score: 50% rhythm + 50% pitch (values come as 0-100)
     const combinedAccuracy = (data.consistency + data.pitchAccuracy) / 2;
+    // Scale to 1000-point system
     const newScore = Math.round(combinedAccuracy * 10);
     
     setRhythmConsistency(data.consistency);
     setPitchAccuracy(data.pitchAccuracy);
-    setCurrentScore(prev => Math.round((prev * 0.9) + (newScore * 0.1)));
+    
+    // Smooth score update - blend new score with history
+    setCurrentScore(prevScore => {
+      const blendedScore = Math.round((prevScore * 0.7) + (newScore * 0.3));
+      return Math.min(1000, Math.max(0, blendedScore));
+    });
+    
     scoreHistoryRef.current.push(newScore);
     
     // Keep only last 100 scores
@@ -124,6 +133,17 @@ export default function Sing() {
       scoreHistoryRef.current.shift();
     }
   }, []);
+
+  const handleTimeUpdate = useCallback((currentTime: number, duration: number) => {
+    setVideoDuration(duration);
+    setRemainingTime(Math.max(0, duration - currentTime));
+  }, []);
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
 
   const handleRestart = useCallback(() => {
     setCurrentScore(0);
@@ -278,32 +298,33 @@ export default function Sing() {
 
                   {/* YouTube Player with Floating Score */}
                   <div className={cn(
-                    "relative rounded-lg overflow-hidden bg-card/50",
-                    isFullscreen ? "flex-1 mx-4" : "aspect-video"
+                    "relative overflow-hidden bg-black",
+                    isFullscreen ? "flex-1 w-full" : "aspect-video rounded-lg"
                   )}>
-                    <div className={cn(
-                      "w-full h-full",
-                      isFullscreen && "flex items-center justify-center"
-                    )}>
-                      <div className={cn(
-                        isFullscreen ? "w-full h-full max-h-full" : "w-full"
-                      )}>
-                        <YouTubePlayer
-                          videoId={selectedVideo.id}
-                          onPlay={handlePlay}
-                          onPause={handlePause}
-                          onEnd={handleEnd}
-                        />
-                      </div>
-                    </div>
+                    <YouTubePlayer
+                      videoId={selectedVideo.id}
+                      onPlay={handlePlay}
+                      onPause={handlePause}
+                      onEnd={handleEnd}
+                      onTimeUpdate={handleTimeUpdate}
+                    />
                     
                     {/* Floating Score Widget */}
                     {isPlaying && (
-                      <FloatingScore
-                        score={currentScore}
-                        pitchAccuracy={pitchAccuracy}
-                        rhythmAccuracy={rhythmConsistency}
-                      />
+                      <div className="absolute top-4 right-4 z-10">
+                        <FloatingScore
+                          score={currentScore}
+                          pitchAccuracy={pitchAccuracy}
+                          rhythmAccuracy={rhythmConsistency}
+                        />
+                      </div>
+                    )}
+
+                    {/* Remaining Time Display */}
+                    {isPlaying && remainingTime > 0 && (
+                      <div className="absolute bottom-4 left-4 z-10 bg-black/70 px-3 py-1.5 rounded-lg text-white text-sm font-medium">
+                        {formatTime(remainingTime)} remaining
+                      </div>
                     )}
                   </div>
 
@@ -377,6 +398,13 @@ export default function Sing() {
                   {/* Bottom Section: Visualizer & Controls (Fullscreen) */}
                   {isFullscreen && (
                     <div className="flex-shrink-0 px-4 pb-4 space-y-4">
+                      {/* Remaining Time in Fullscreen */}
+                      {remainingTime > 0 && (
+                        <div className="text-center text-sm text-muted-foreground">
+                          {formatTime(remainingTime)} remaining
+                        </div>
+                      )}
+
                       {/* Pitch Visualizer - At Bottom */}
                       <Card className="glass-card">
                         <CardContent className="p-3">
