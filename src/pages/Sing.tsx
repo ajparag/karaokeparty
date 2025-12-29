@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { Layout } from '@/components/layout/Layout';
 import { YouTubeSearch, VideoResult } from '@/components/karaoke/YouTubeSearch';
 import { YouTubePlayer } from '@/components/karaoke/YouTubePlayer';
@@ -9,7 +9,8 @@ import { Card, CardContent } from '@/components/ui/card';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import { Play, Pause, RotateCcw, Mic } from 'lucide-react';
+import { Play, Pause, RotateCcw, Mic, Maximize, Minimize, X } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 export default function Sing() {
   const { user } = useAuth();
@@ -19,6 +20,8 @@ export default function Sing() {
   const [rhythmConsistency, setRhythmConsistency] = useState(0);
   const [showResults, setShowResults] = useState(false);
   const [performanceTime, setPerformanceTime] = useState(0);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const fullscreenRef = useRef<HTMLDivElement>(null);
   const scoreHistoryRef = useRef<number[]>([]);
   const performanceStartRef = useRef<number | null>(null);
 
@@ -106,6 +109,24 @@ export default function Sing() {
     setIsPlaying(false);
   }, []);
 
+  const toggleFullscreen = useCallback(() => {
+    if (!document.fullscreenElement) {
+      fullscreenRef.current?.requestFullscreen();
+      setIsFullscreen(true);
+    } else {
+      document.exitFullscreen();
+      setIsFullscreen(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
+
   return (
     <Layout>
       <div className="container mx-auto px-4 py-8">
@@ -184,13 +205,45 @@ export default function Sing() {
                   </CardContent>
                 </Card>
               ) : (
-                <>
+                <div
+                  ref={fullscreenRef}
+                  className={cn(
+                    "space-y-4",
+                    isFullscreen && "fixed inset-0 z-50 bg-background p-4 flex flex-col"
+                  )}
+                >
+                  {/* Fullscreen Header */}
+                  {isFullscreen && (
+                    <div className="flex items-center justify-between mb-2">
+                      <h2 className="font-semibold text-lg line-clamp-1">{selectedVideo.title}</h2>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={toggleFullscreen}
+                      >
+                        <X className="h-5 w-5" />
+                      </Button>
+                    </div>
+                  )}
+
                   {/* Pitch Visualizer - Above Video */}
-                  <Card className="glass-card">
+                  <Card className={cn("glass-card", isFullscreen && "flex-shrink-0")}>
                     <CardContent className="p-4">
-                      <div className="flex items-center gap-2 mb-3">
-                        <Mic className="h-5 w-5 text-primary" />
-                        <span className="font-medium">Voice Analysis</span>
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                          <Mic className="h-5 w-5 text-primary" />
+                          <span className="font-medium">Voice Analysis</span>
+                        </div>
+                        {!isFullscreen && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={toggleFullscreen}
+                            title="Enter fullscreen"
+                          >
+                            <Maximize className="h-4 w-4" />
+                          </Button>
+                        )}
                       </div>
                       <PitchVisualizer 
                         isActive={isPlaying} 
@@ -200,7 +253,10 @@ export default function Sing() {
                   </Card>
 
                   {/* YouTube Player */}
-                  <div className="aspect-video rounded-lg overflow-hidden bg-card/50">
+                  <div className={cn(
+                    "aspect-video rounded-lg overflow-hidden bg-card/50",
+                    isFullscreen && "flex-1 min-h-0"
+                  )}>
                     <YouTubePlayer
                       videoId={selectedVideo.id}
                       onPlay={handlePlay}
@@ -210,10 +266,10 @@ export default function Sing() {
                   </div>
 
                   {/* Score Display - Below Video */}
-                  <Card className="glass-card">
-                    <CardContent className="p-6 space-y-4">
+                  <Card className={cn("glass-card", isFullscreen && "flex-shrink-0")}>
+                    <CardContent className={cn("space-y-4", isFullscreen ? "p-4" : "p-6")}>
                       <div className="flex items-center justify-center">
-                        <ScoreDisplay score={currentScore} size="lg" />
+                        <ScoreDisplay score={currentScore} size={isFullscreen ? "xl" : "lg"} />
                       </div>
 
                       {/* Rhythm Meter */}
@@ -222,7 +278,7 @@ export default function Sing() {
                           <span className="text-sm text-muted-foreground">Rhythm Consistency</span>
                           <span className="text-sm font-medium">{Math.round(rhythmConsistency)}%</span>
                         </div>
-                        <div className="h-3 bg-muted rounded-full overflow-hidden">
+                        <div className={cn("bg-muted rounded-full overflow-hidden", isFullscreen ? "h-4" : "h-3")}>
                           <div 
                             className="h-full gradient-accent transition-all duration-300"
                             style={{ width: `${rhythmConsistency}%` }}
@@ -256,10 +312,19 @@ export default function Sing() {
                         >
                           Finish
                         </Button>
+                        {isFullscreen && (
+                          <Button
+                            size="lg"
+                            variant="ghost"
+                            onClick={toggleFullscreen}
+                          >
+                            <Minimize className="h-5 w-5" />
+                          </Button>
+                        )}
                       </div>
                     </CardContent>
                   </Card>
-                </>
+                </div>
               )}
             </div>
           )}
