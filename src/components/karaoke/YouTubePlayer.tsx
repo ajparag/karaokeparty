@@ -124,9 +124,9 @@ export const YouTubePlayer = memo(function YouTubePlayer({ videoId, onPlay, onPa
   };
 
   return (
-    <div className="space-y-4">
-      <div className="relative aspect-video rounded-2xl overflow-hidden bg-foreground/5">
-        <div ref={containerRef} className="absolute inset-0" />
+    <div className="h-full flex flex-col">
+      <div className="relative flex-1 rounded-2xl overflow-hidden bg-foreground/5">
+        <div ref={containerRef} className="absolute inset-0 [&>iframe]:w-full [&>iframe]:h-full" />
         
         {!isReady && (
           <div className="absolute inset-0 flex items-center justify-center bg-card">
@@ -135,7 +135,7 @@ export const YouTubePlayer = memo(function YouTubePlayer({ videoId, onPlay, onPa
         )}
       </div>
 
-      <div className="flex items-center gap-4 p-4 bg-card rounded-xl border border-border">
+      <div className="flex items-center gap-4 p-4 bg-card rounded-xl border border-border mt-4 flex-shrink-0">
         <Button
           size="icon"
           variant="ghost"

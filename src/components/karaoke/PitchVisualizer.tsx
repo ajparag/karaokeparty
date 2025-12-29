@@ -2,16 +2,18 @@ import { useEffect, useRef, useState } from 'react';
 
 interface PitchVisualizerProps {
   isActive: boolean;
-  onRhythmData?: (data: { beatStrength: number; consistency: number }) => void;
+  onRhythmData?: (data: { beatStrength: number; consistency: number; pitchAccuracy: number }) => void;
+  compact?: boolean;
 }
 
-export function PitchVisualizer({ isActive, onRhythmData }: PitchVisualizerProps) {
+export function PitchVisualizer({ isActive, onRhythmData, compact = false }: PitchVisualizerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animationRef = useRef<number | null>(null);
   const beatIntervalsRef = useRef<number[]>([]);
   const lastBeatTimeRef = useRef<number>(0);
+  const pitchHistoryRef = useRef<number[]>([]);
   const [hasPermission, setHasPermission] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -57,10 +59,55 @@ export function PitchVisualizer({ isActive, onRhythmData }: PitchVisualizerProps
     };
   }, [isActive]);
 
+  const detectPitch = (frequencyData: Uint8Array, sampleRate: number): number => {
+    // Find the dominant frequency
+    let maxIndex = 0;
+    let maxValue = 0;
+    
+    // Focus on typical vocal range (80Hz - 1000Hz)
+    const minBin = Math.floor(80 / (sampleRate / 2048));
+    const maxBin = Math.floor(1000 / (sampleRate / 2048));
+    
+    for (let i = minBin; i < maxBin && i < frequencyData.length; i++) {
+      if (frequencyData[i] > maxValue) {
+        maxValue = frequencyData[i];
+        maxIndex = i;
+      }
+    }
+    
+    // Convert bin index to frequency
+    const frequency = (maxIndex * sampleRate) / 2048;
+    return frequency;
+  };
+
+  const calculatePitchAccuracy = (pitchHistory: number[]): number => {
+    if (pitchHistory.length < 5) return 50;
+    
+    // Calculate pitch stability - how consistent the pitch is
+    const recentPitches = pitchHistory.slice(-20);
+    const avgPitch = recentPitches.reduce((a, b) => a + b, 0) / recentPitches.length;
+    
+    if (avgPitch < 50) return 50; // Too quiet
+    
+    const variance = recentPitches.reduce((sum, pitch) => {
+      return sum + Math.pow(pitch - avgPitch, 2);
+    }, 0) / recentPitches.length;
+    
+    const stdDev = Math.sqrt(variance);
+    
+    // Lower variance = better pitch control
+    // Using a curve that makes it easier to get good scores
+    const rawAccuracy = Math.max(0, 100 - (stdDev / avgPitch * 100));
+    const accuracy = Math.min(100, rawAccuracy * 1.3 + 20); // Boost and floor
+    
+    return accuracy;
+  };
+
   const startVisualization = () => {
     const canvas = canvasRef.current;
     const analyser = analyserRef.current;
-    if (!canvas || !analyser) return;
+    const audioContext = audioContextRef.current;
+    if (!canvas || !analyser || !audioContext) return;
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -106,6 +153,18 @@ export function PitchVisualizer({ isActive, onRhythmData }: PitchVisualizerProps
       const avgVolume = frequencyData.reduce((a, b) => a + b, 0) / frequencyData.length;
       const normalizedVolume = avgVolume / 255;
 
+      // Detect pitch
+      const pitch = detectPitch(frequencyData, audioContext.sampleRate);
+      if (pitch > 50 && normalizedVolume > 0.1) {
+        pitchHistoryRef.current.push(pitch);
+        if (pitchHistoryRef.current.length > 50) {
+          pitchHistoryRef.current.shift();
+        }
+      }
+
+      // Calculate pitch accuracy
+      const pitchAccuracy = calculatePitchAccuracy(pitchHistoryRef.current);
+
       // Detect beats with less strict threshold
       if (normalizedVolume > 0.15) {
         const now = performance.now();
@@ -129,14 +188,13 @@ export function PitchVisualizer({ isActive, onRhythmData }: PitchVisualizerProps
           const stdDev = Math.sqrt(variance);
           
           // More lenient consistency calculation
-          // Lower stdDev/avgInterval ratio = better consistency
-          // Using a gentler curve to make scoring easier
           const rawConsistency = Math.max(0, 100 - (stdDev / avgInterval * 50));
           const consistency = Math.min(100, rawConsistency * 1.2); // Boost scores
           
           onRhythmData({
             beatStrength: normalizedVolume,
             consistency: consistency,
+            pitchAccuracy: pitchAccuracy,
           });
         }
       }
@@ -165,7 +223,7 @@ export function PitchVisualizer({ isActive, onRhythmData }: PitchVisualizerProps
 
   if (error) {
     return (
-      <div className="w-full h-32 bg-card/50 rounded-lg flex items-center justify-center border border-border">
+      <div className={`w-full ${compact ? 'h-16' : 'h-32'} bg-card/50 rounded-lg flex items-center justify-center border border-border`}>
         <p className="text-muted-foreground text-sm">{error}</p>
       </div>
     );
@@ -176,8 +234,8 @@ export function PitchVisualizer({ isActive, onRhythmData }: PitchVisualizerProps
       <canvas
         ref={canvasRef}
         width={800}
-        height={150}
-        className="w-full h-32 rounded-lg border border-border bg-card/30"
+        height={compact ? 80 : 150}
+        className={`w-full ${compact ? 'h-16' : 'h-32'} rounded-lg border border-border bg-card/30`}
       />
       {!hasPermission && isActive && (
         <p className="text-muted-foreground text-xs mt-2 text-center">
