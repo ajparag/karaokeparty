@@ -137,7 +137,7 @@ export default function Sing() {
               <span className="gradient-text">Sing Your Heart Out</span>
             </h1>
             <p className="text-muted-foreground">
-              {selectedVideo ? 'Follow along and keep the rhythm!' : 'Search for a song to get started'}
+              {selectedVideo ? 'Follow along and keep the rhythm!' : 'Paste a YouTube link to your favorite karaoke song to get started'}
             </p>
           </div>
 
