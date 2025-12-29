@@ -185,7 +185,21 @@ export default function Sing() {
                 </Card>
               ) : (
                 <>
-                  {/* YouTube Player (hidden for audio) */}
+                  {/* Pitch Visualizer - Above Video */}
+                  <Card className="glass-card">
+                    <CardContent className="p-4">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Mic className="h-5 w-5 text-primary" />
+                        <span className="font-medium">Voice Analysis</span>
+                      </div>
+                      <PitchVisualizer 
+                        isActive={isPlaying} 
+                        onRhythmData={handleRhythmData}
+                      />
+                    </CardContent>
+                  </Card>
+
+                  {/* YouTube Player */}
                   <div className="aspect-video rounded-lg overflow-hidden bg-card/50">
                     <YouTubePlayer
                       videoId={selectedVideo.id}
@@ -195,21 +209,12 @@ export default function Sing() {
                     />
                   </div>
 
-                  {/* Pitch Visualizer */}
+                  {/* Score Display - Below Video */}
                   <Card className="glass-card">
                     <CardContent className="p-6 space-y-4">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <Mic className="h-5 w-5 text-primary" />
-                          <span className="font-medium">Voice Analysis</span>
-                        </div>
-                        <ScoreDisplay score={currentScore} size="sm" />
+                      <div className="flex items-center justify-center">
+                        <ScoreDisplay score={currentScore} size="lg" />
                       </div>
-                      
-                      <PitchVisualizer 
-                        isActive={isPlaying} 
-                        onRhythmData={handleRhythmData}
-                      />
 
                       {/* Rhythm Meter */}
                       <div>
@@ -217,7 +222,7 @@ export default function Sing() {
                           <span className="text-sm text-muted-foreground">Rhythm Consistency</span>
                           <span className="text-sm font-medium">{Math.round(rhythmConsistency)}%</span>
                         </div>
-                        <div className="h-2 bg-muted rounded-full overflow-hidden">
+                        <div className="h-3 bg-muted rounded-full overflow-hidden">
                           <div 
                             className="h-full gradient-accent transition-all duration-300"
                             style={{ width: `${rhythmConsistency}%` }}
@@ -226,7 +231,7 @@ export default function Sing() {
                       </div>
 
                       {/* Controls */}
-                      <div className="flex justify-center gap-4 pt-4">
+                      <div className="flex justify-center gap-4 pt-2">
                         <Button
                           size="lg"
                           onClick={() => setIsPlaying(!isPlaying)}
