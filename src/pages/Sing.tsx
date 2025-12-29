@@ -4,6 +4,8 @@ import { YouTubeSearch, VideoResult } from '@/components/karaoke/YouTubeSearch';
 import { YouTubePlayer } from '@/components/karaoke/YouTubePlayer';
 import { PitchVisualizer } from '@/components/karaoke/PitchVisualizer';
 import { ScoreDisplay } from '@/components/karaoke/ScoreDisplay';
+import { FloatingScore } from '@/components/karaoke/FloatingScore';
+import { CelebrationOverlay } from '@/components/karaoke/CelebrationOverlay';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { useAuth } from '@/hooks/useAuth';
@@ -18,7 +20,9 @@ export default function Sing() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentScore, setCurrentScore] = useState(0);
   const [rhythmConsistency, setRhythmConsistency] = useState(0);
+  const [pitchAccuracy, setPitchAccuracy] = useState(0);
   const [showResults, setShowResults] = useState(false);
+  const [showCelebration, setShowCelebration] = useState(false);
   const [performanceTime, setPerformanceTime] = useState(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const fullscreenRef = useRef<HTMLDivElement>(null);
@@ -29,7 +33,9 @@ export default function Sing() {
     setSelectedVideo(video);
     setCurrentScore(0);
     setRhythmConsistency(0);
+    setPitchAccuracy(0);
     setShowResults(false);
+    setShowCelebration(false);
     scoreHistoryRef.current = [];
     performanceStartRef.current = null;
   }, []);
@@ -45,6 +51,15 @@ export default function Sing() {
     setIsPlaying(false);
   }, []);
 
+  const calculateRating = (score: number) => {
+    if (score >= 950) return 'S';
+    if (score >= 850) return 'A';
+    if (score >= 700) return 'B';
+    if (score >= 550) return 'C';
+    if (score >= 400) return 'D';
+    return 'F';
+  };
+
   const handleEnd = useCallback(async () => {
     setIsPlaying(false);
     
@@ -59,12 +74,13 @@ export default function Sing() {
       : currentScore;
     
     setCurrentScore(avgScore);
-    setShowResults(true);
+    
+    // Show celebration first
+    setShowCelebration(true);
     
     // Save score if user is logged in
     if (user && selectedVideo && performanceTime > 10) {
-      // Rating thresholds for 1000-point scale
-      const rating = avgScore >= 950 ? 'S' : avgScore >= 850 ? 'A' : avgScore >= 700 ? 'B' : avgScore >= 550 ? 'C' : avgScore >= 400 ? 'D' : 'F';
+      const rating = calculateRating(avgScore);
       
       const { error } = await supabase.from('scores').insert({
         user_id: user.id,
@@ -75,6 +91,7 @@ export default function Sing() {
         score: avgScore,
         rating,
         rhythm_accuracy: rhythmConsistency,
+        timing_accuracy: pitchAccuracy,
         duration_seconds: performanceTime,
       });
 
@@ -85,12 +102,20 @@ export default function Sing() {
         toast.success('Score saved!');
       }
     }
-  }, [user, selectedVideo, performanceTime, currentScore, rhythmConsistency]);
+  }, [user, selectedVideo, performanceTime, currentScore, rhythmConsistency, pitchAccuracy]);
 
-  const handleRhythmData = useCallback((data: { beatStrength: number; consistency: number }) => {
-    // Update score based on rhythm consistency (scale to 1000)
-    const newScore = Math.round(data.consistency * 10);
+  const handleCelebrationComplete = useCallback(() => {
+    setShowCelebration(false);
+    setShowResults(true);
+  }, []);
+
+  const handleRhythmData = useCallback((data: { beatStrength: number; consistency: number; pitchAccuracy: number }) => {
+    // Combined score: 50% rhythm + 50% pitch
+    const combinedAccuracy = (data.consistency + data.pitchAccuracy) / 2;
+    const newScore = Math.round(combinedAccuracy * 10);
+    
     setRhythmConsistency(data.consistency);
+    setPitchAccuracy(data.pitchAccuracy);
     setCurrentScore(prev => Math.round((prev * 0.9) + (newScore * 0.1)));
     scoreHistoryRef.current.push(newScore);
     
@@ -103,7 +128,9 @@ export default function Sing() {
   const handleRestart = useCallback(() => {
     setCurrentScore(0);
     setRhythmConsistency(0);
+    setPitchAccuracy(0);
     setShowResults(false);
+    setShowCelebration(false);
     scoreHistoryRef.current = [];
     performanceStartRef.current = null;
     setIsPlaying(false);
@@ -186,6 +213,14 @@ export default function Sing() {
                 </div>
               </Card>
 
+              {/* Celebration Overlay */}
+              <CelebrationOverlay
+                isVisible={showCelebration}
+                rating={calculateRating(currentScore)}
+                score={currentScore}
+                onComplete={handleCelebrationComplete}
+              />
+
               {/* Results Overlay */}
               {showResults ? (
                 <Card className="glass-card">
@@ -194,7 +229,11 @@ export default function Sing() {
                     <div className="flex justify-center">
                       <ScoreDisplay score={currentScore} size="lg" />
                     </div>
-                    <div className="grid grid-cols-2 gap-4 max-w-sm mx-auto">
+                    <div className="grid grid-cols-3 gap-4 max-w-md mx-auto">
+                      <div className="p-4 bg-muted/30 rounded-lg">
+                        <div className="text-2xl font-bold">{Math.round(pitchAccuracy)}%</div>
+                        <div className="text-sm text-muted-foreground">Pitch</div>
+                      </div>
                       <div className="p-4 bg-muted/30 rounded-lg">
                         <div className="text-2xl font-bold">{Math.round(rhythmConsistency)}%</div>
                         <div className="text-sm text-muted-foreground">Rhythm</div>
@@ -220,12 +259,12 @@ export default function Sing() {
                   ref={fullscreenRef}
                   className={cn(
                     "space-y-4",
-                    isFullscreen && "fixed inset-0 z-50 bg-background p-4 flex flex-col"
+                    isFullscreen && "fixed inset-0 z-50 bg-background flex flex-col"
                   )}
                 >
                   {/* Fullscreen Header */}
                   {isFullscreen && (
-                    <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center justify-between px-4 pt-4 flex-shrink-0">
                       <h2 className="font-semibold text-lg line-clamp-1">{selectedVideo.title}</h2>
                       <Button
                         variant="ghost"
@@ -237,68 +276,129 @@ export default function Sing() {
                     </div>
                   )}
 
-                  {/* Pitch Visualizer - Above Video */}
-                  <Card className={cn("glass-card", isFullscreen && "flex-shrink-0")}>
-                    <CardContent className="p-4">
-                      <div className="flex items-center justify-between mb-3">
-                        <div className="flex items-center gap-2">
-                          <Mic className="h-5 w-5 text-primary" />
-                          <span className="font-medium">Voice Analysis</span>
-                        </div>
-                        {!isFullscreen && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={toggleFullscreen}
-                            title="Enter fullscreen"
-                          >
-                            <Maximize className="h-4 w-4" />
-                          </Button>
-                        )}
-                      </div>
-                      <PitchVisualizer 
-                        isActive={isPlaying} 
-                        onRhythmData={handleRhythmData}
-                      />
-                    </CardContent>
-                  </Card>
-
-                  {/* YouTube Player */}
+                  {/* YouTube Player with Floating Score */}
                   <div className={cn(
-                    "aspect-video rounded-lg overflow-hidden bg-card/50",
-                    isFullscreen && "flex-1 min-h-0"
+                    "relative rounded-lg overflow-hidden bg-card/50",
+                    isFullscreen ? "flex-1 mx-4" : "aspect-video"
                   )}>
-                    <YouTubePlayer
-                      videoId={selectedVideo.id}
-                      onPlay={handlePlay}
-                      onPause={handlePause}
-                      onEnd={handleEnd}
-                    />
+                    <div className={cn(
+                      "w-full h-full",
+                      isFullscreen && "flex items-center justify-center"
+                    )}>
+                      <div className={cn(
+                        isFullscreen ? "w-full h-full max-h-full" : "w-full"
+                      )}>
+                        <YouTubePlayer
+                          videoId={selectedVideo.id}
+                          onPlay={handlePlay}
+                          onPause={handlePause}
+                          onEnd={handleEnd}
+                        />
+                      </div>
+                    </div>
+                    
+                    {/* Floating Score Widget */}
+                    {isPlaying && (
+                      <FloatingScore
+                        score={currentScore}
+                        pitchAccuracy={pitchAccuracy}
+                        rhythmAccuracy={rhythmConsistency}
+                      />
+                    )}
                   </div>
 
-                  {/* Score Display - Below Video */}
-                  <Card className={cn("glass-card", isFullscreen && "flex-shrink-0")}>
-                    <CardContent className={cn("space-y-4", isFullscreen ? "p-4" : "p-6")}>
-                      <div className="flex items-center justify-center">
-                        <ScoreDisplay score={currentScore} size={isFullscreen ? "xl" : "lg"} />
-                      </div>
+                  {/* Score Display - Only in normal mode */}
+                  {!isFullscreen && (
+                    <Card className="glass-card">
+                      <CardContent className="p-6 space-y-4">
+                        <div className="flex items-center justify-center">
+                          <ScoreDisplay score={currentScore} size="lg" />
+                        </div>
 
-                      {/* Rhythm Meter */}
-                      <div>
-                        <div className="flex justify-between mb-2">
-                          <span className="text-sm text-muted-foreground">Rhythm Consistency</span>
-                          <span className="text-sm font-medium">{Math.round(rhythmConsistency)}%</span>
+                        {/* Accuracy Meters */}
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <div className="flex justify-between mb-2">
+                              <span className="text-sm text-muted-foreground">Pitch Accuracy</span>
+                              <span className="text-sm font-medium">{Math.round(pitchAccuracy)}%</span>
+                            </div>
+                            <div className="h-3 bg-muted rounded-full overflow-hidden">
+                              <div 
+                                className="h-full gradient-primary transition-all duration-300"
+                                style={{ width: `${pitchAccuracy}%` }}
+                              />
+                            </div>
+                          </div>
+                          <div>
+                            <div className="flex justify-between mb-2">
+                              <span className="text-sm text-muted-foreground">Rhythm Consistency</span>
+                              <span className="text-sm font-medium">{Math.round(rhythmConsistency)}%</span>
+                            </div>
+                            <div className="h-3 bg-muted rounded-full overflow-hidden">
+                              <div 
+                                className="h-full gradient-accent transition-all duration-300"
+                                style={{ width: `${rhythmConsistency}%` }}
+                              />
+                            </div>
+                          </div>
                         </div>
-                        <div className={cn("bg-muted rounded-full overflow-hidden", isFullscreen ? "h-4" : "h-3")}>
-                          <div 
-                            className="h-full gradient-accent transition-all duration-300"
-                            style={{ width: `${rhythmConsistency}%` }}
+
+                        {/* Controls */}
+                        <div className="flex justify-center gap-4 pt-2">
+                          <Button
+                            size="lg"
+                            onClick={() => setIsPlaying(!isPlaying)}
+                            className="gap-2"
+                          >
+                            {isPlaying ? (
+                              <>
+                                <Pause className="h-5 w-5" />
+                                Pause
+                              </>
+                            ) : (
+                              <>
+                                <Play className="h-5 w-5" />
+                                Start Singing
+                              </>
+                            )}
+                          </Button>
+                          <Button
+                            size="lg"
+                            variant="outline"
+                            onClick={handleEnd}
+                          >
+                            Finish
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {/* Bottom Section: Visualizer & Controls (Fullscreen) */}
+                  {isFullscreen && (
+                    <div className="flex-shrink-0 px-4 pb-4 space-y-4">
+                      {/* Pitch Visualizer - At Bottom */}
+                      <Card className="glass-card">
+                        <CardContent className="p-3">
+                          <div className="flex items-center gap-3 mb-2">
+                            <Mic className="h-4 w-4 text-primary" />
+                            <span className="text-sm font-medium">Voice Analysis</span>
+                            <div className="flex-1" />
+                            <div className="flex gap-4 text-xs text-muted-foreground">
+                              <span>Pitch: {Math.round(pitchAccuracy)}%</span>
+                              <span>Rhythm: {Math.round(rhythmConsistency)}%</span>
+                            </div>
+                          </div>
+                          <PitchVisualizer 
+                            isActive={isPlaying} 
+                            onRhythmData={handleRhythmData}
+                            compact
                           />
-                        </div>
-                      </div>
+                        </CardContent>
+                      </Card>
 
                       {/* Controls */}
-                      <div className="flex justify-center gap-4 pt-2">
+                      <div className="flex justify-center gap-4">
                         <Button
                           size="lg"
                           onClick={() => setIsPlaying(!isPlaying)}
@@ -323,18 +423,42 @@ export default function Sing() {
                         >
                           Finish
                         </Button>
-                        {isFullscreen && (
-                          <Button
-                            size="lg"
-                            variant="ghost"
-                            onClick={toggleFullscreen}
-                          >
-                            <Minimize className="h-5 w-5" />
-                          </Button>
-                        )}
+                        <Button
+                          size="lg"
+                          variant="ghost"
+                          onClick={toggleFullscreen}
+                        >
+                          <Minimize className="h-5 w-5" />
+                        </Button>
                       </div>
-                    </CardContent>
-                  </Card>
+                    </div>
+                  )}
+
+                  {/* Visualizer in normal mode */}
+                  {!isFullscreen && (
+                    <Card className="glass-card">
+                      <CardContent className="p-4">
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-2">
+                            <Mic className="h-5 w-5 text-primary" />
+                            <span className="font-medium">Voice Analysis</span>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={toggleFullscreen}
+                            title="Enter fullscreen"
+                          >
+                            <Maximize className="h-4 w-4" />
+                          </Button>
+                        </div>
+                        <PitchVisualizer 
+                          isActive={isPlaying} 
+                          onRhythmData={handleRhythmData}
+                        />
+                      </CardContent>
+                    </Card>
+                  )}
                 </div>
               )}
             </div>
@@ -345,7 +469,7 @@ export default function Sing() {
             <div className="grid md:grid-cols-3 gap-4">
               {[
                 { title: 'Warm Up', desc: 'Start with songs you know well' },
-                { title: 'Stay on Beat', desc: 'Rhythm consistency is key to high scores' },
+                { title: 'Stay on Beat', desc: 'Rhythm and pitch accuracy boost your score' },
                 { title: 'Have Fun', desc: 'The best performances come from enjoying yourself' },
               ].map((tip, i) => (
                 <Card key={i} className="glass-card p-4">
