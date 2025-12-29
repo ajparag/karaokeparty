@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, memo } from 'react';
 import { Play, Pause, Volume2, VolumeX } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
@@ -17,26 +17,31 @@ declare global {
   }
 }
 
-export function YouTubePlayer({ videoId, onPlay, onPause, onEnd }: YouTubePlayerProps) {
+export const YouTubePlayer = memo(function YouTubePlayer({ videoId, onPlay, onPause, onEnd }: YouTubePlayerProps) {
   const playerRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [volume, setVolume] = useState([80]);
   const [isReady, setIsReady] = useState(false);
+  
+  // Use refs for callbacks to avoid re-creating the player
+  const onPlayRef = useRef(onPlay);
+  const onPauseRef = useRef(onPause);
+  const onEndRef = useRef(onEnd);
+  
+  useEffect(() => {
+    onPlayRef.current = onPlay;
+    onPauseRef.current = onPause;
+    onEndRef.current = onEnd;
+  }, [onPlay, onPause, onEnd]);
 
   useEffect(() => {
-    // Load YouTube IFrame API
-    if (!window.YT) {
-      const tag = document.createElement('script');
-      tag.src = 'https://www.youtube.com/iframe_api';
-      const firstScriptTag = document.getElementsByTagName('script')[0];
-      firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag);
-    }
-
+    let player: any = null;
+    
     const initPlayer = () => {
-      if (containerRef.current && window.YT) {
-        playerRef.current = new window.YT.Player(containerRef.current, {
+      if (containerRef.current && window.YT && window.YT.Player) {
+        player = new window.YT.Player(containerRef.current, {
           videoId,
           playerVars: {
             autoplay: 0,
@@ -46,17 +51,20 @@ export function YouTubePlayer({ videoId, onPlay, onPause, onEnd }: YouTubePlayer
             showinfo: 0,
           },
           events: {
-            onReady: () => setIsReady(true),
+            onReady: () => {
+              playerRef.current = player;
+              setIsReady(true);
+            },
             onStateChange: (event: any) => {
               if (event.data === window.YT.PlayerState.PLAYING) {
                 setIsPlaying(true);
-                onPlay?.();
+                onPlayRef.current?.();
               } else if (event.data === window.YT.PlayerState.PAUSED) {
                 setIsPlaying(false);
-                onPause?.();
+                onPauseRef.current?.();
               } else if (event.data === window.YT.PlayerState.ENDED) {
                 setIsPlaying(false);
-                onEnd?.();
+                onEndRef.current?.();
               }
             },
           },
@@ -64,18 +72,27 @@ export function YouTubePlayer({ videoId, onPlay, onPause, onEnd }: YouTubePlayer
       }
     };
 
-    if (window.YT && window.YT.Player) {
+    // Load YouTube IFrame API if not already loaded
+    if (!window.YT) {
+      const tag = document.createElement('script');
+      tag.src = 'https://www.youtube.com/iframe_api';
+      const firstScriptTag = document.getElementsByTagName('script')[0];
+      firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag);
+      
+      window.onYouTubeIframeAPIReady = initPlayer;
+    } else if (window.YT.Player) {
       initPlayer();
     } else {
       window.onYouTubeIframeAPIReady = initPlayer;
     }
 
     return () => {
-      if (playerRef.current) {
-        playerRef.current.destroy();
+      if (player && player.destroy) {
+        player.destroy();
       }
+      playerRef.current = null;
     };
-  }, [videoId, onPlay, onPause, onEnd]);
+  }, [videoId]); // Only re-create player when videoId changes
 
   const togglePlay = () => {
     if (!playerRef.current) return;
@@ -145,4 +162,4 @@ export function YouTubePlayer({ videoId, onPlay, onPause, onEnd }: YouTubePlayer
       </div>
     </div>
   );
-}
+});
