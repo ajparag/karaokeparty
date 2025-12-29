@@ -1,13 +1,46 @@
 import { cn } from '@/lib/utils';
+import { useEffect, useState, useRef } from 'react';
 
 interface ScoreDisplayProps {
   score: number;
   rating?: string;
-  size?: 'sm' | 'md' | 'lg';
+  size?: 'sm' | 'md' | 'lg' | 'xl';
   showRating?: boolean;
 }
 
 export function ScoreDisplay({ score, rating, size = 'md', showRating = true }: ScoreDisplayProps) {
+  const [displayScore, setDisplayScore] = useState(score);
+  const [isAnimating, setIsAnimating] = useState(false);
+  const prevScoreRef = useRef(score);
+
+  useEffect(() => {
+    if (score !== prevScoreRef.current) {
+      setIsAnimating(true);
+      
+      // Animate the score counting up/down
+      const diff = score - displayScore;
+      const steps = 20;
+      const stepValue = diff / steps;
+      let current = displayScore;
+      let step = 0;
+
+      const interval = setInterval(() => {
+        step++;
+        current += stepValue;
+        setDisplayScore(Math.round(current));
+        
+        if (step >= steps) {
+          clearInterval(interval);
+          setDisplayScore(score);
+          setTimeout(() => setIsAnimating(false), 200);
+        }
+      }, 30);
+
+      prevScoreRef.current = score;
+      return () => clearInterval(interval);
+    }
+  }, [score, displayScore]);
+
   const getRatingColor = (r: string) => {
     switch (r) {
       case 'S': return 'text-score-s';
@@ -22,9 +55,9 @@ export function ScoreDisplay({ score, rating, size = 'md', showRating = true }: 
 
   const getRatingBg = (r: string) => {
     switch (r) {
-      case 'S': return 'bg-score-s/20';
-      case 'A': return 'bg-score-a/20';
-      case 'B': return 'bg-score-b/20';
+      case 'S': return 'bg-score-s/20 shadow-[0_0_30px_hsl(var(--score-s)/0.4)]';
+      case 'A': return 'bg-score-a/20 shadow-[0_0_25px_hsl(var(--score-a)/0.3)]';
+      case 'B': return 'bg-score-b/20 shadow-[0_0_20px_hsl(var(--score-b)/0.3)]';
       case 'C': return 'bg-score-c/20';
       case 'D': return 'bg-score-d/20';
       case 'F': return 'bg-score-f/20';
@@ -48,31 +81,46 @@ export function ScoreDisplay({ score, rating, size = 'md', showRating = true }: 
     sm: 'text-2xl',
     md: 'text-4xl',
     lg: 'text-6xl',
+    xl: 'text-8xl',
   };
 
   const ratingSizeClasses = {
     sm: 'text-xl h-8 w-8',
     md: 'text-3xl h-12 w-12',
     lg: 'text-5xl h-20 w-20',
+    xl: 'text-7xl h-28 w-28',
   };
 
   return (
-    <div className="flex items-center gap-4">
+    <div className={cn(
+      "flex items-center gap-4 transition-transform duration-200",
+      isAnimating && "scale-110"
+    )}>
       {showRating && (
         <div className={cn(
-          'flex items-center justify-center rounded-xl font-display font-bold',
+          'flex items-center justify-center rounded-xl font-display font-bold transition-all duration-300',
           getRatingBg(displayRating),
           getRatingColor(displayRating),
-          ratingSizeClasses[size]
+          ratingSizeClasses[size],
+          isAnimating && 'animate-pulse'
         )}>
           {displayRating}
         </div>
       )}
-      <div>
-        <div className={cn('font-display font-bold', sizeClasses[size])}>
-          {score}
+      <div className="text-center">
+        <div className={cn(
+          'font-display font-bold tabular-nums transition-all duration-200',
+          sizeClasses[size],
+          isAnimating && 'gradient-text'
+        )}>
+          {displayScore.toLocaleString()}
         </div>
-        <div className="text-muted-foreground text-sm">points</div>
+        <div className={cn(
+          "text-muted-foreground",
+          size === 'xl' ? 'text-lg' : size === 'lg' ? 'text-base' : 'text-sm'
+        )}>
+          points
+        </div>
       </div>
     </div>
   );
