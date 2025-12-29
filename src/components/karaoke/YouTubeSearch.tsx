@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 
-interface YouTubeVideo {
+export interface VideoResult {
   id: string;
   title: string;
   thumbnail: string;
@@ -13,13 +13,13 @@ interface YouTubeVideo {
 }
 
 interface YouTubeSearchProps {
-  onSelectVideo: (video: YouTubeVideo) => void;
+  onSelectVideo: (video: VideoResult) => void;
 }
 
 // Simple YouTube video ID extractor and search using YouTube's internal API
 export function YouTubeSearch({ onSelectVideo }: YouTubeSearchProps) {
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<YouTubeVideo[]>([]);
+  const [results, setResults] = useState<VideoResult[]>([]);
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
 
@@ -35,7 +35,7 @@ export function YouTubeSearch({ onSelectVideo }: YouTubeSearchProps) {
       if (urlMatch) {
         // Extract video ID from URL
         const videoId = urlMatch[1];
-        const video: YouTubeVideo = {
+        const video: VideoResult = {
           id: videoId,
           title: 'YouTube Video',
           thumbnail: `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`,
@@ -45,7 +45,7 @@ export function YouTubeSearch({ onSelectVideo }: YouTubeSearchProps) {
       } else {
         // For demo purposes, show popular karaoke videos
         // In production, you'd use YouTube Data API with an API key
-        const demoResults: YouTubeVideo[] = [
+        const demoResults: VideoResult[] = [
           {
             id: 'dQw4w9WgXcQ',
             title: `${query} - Karaoke Version`,

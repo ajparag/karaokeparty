@@ -32,12 +32,13 @@ export function ScoreDisplay({ score, rating, size = 'md', showRating = true }: 
     }
   };
 
+  // Rating thresholds for 1000-point scale
   const calculateRating = (s: number) => {
-    if (s >= 95) return 'S';
-    if (s >= 85) return 'A';
-    if (s >= 70) return 'B';
-    if (s >= 55) return 'C';
-    if (s >= 40) return 'D';
+    if (s >= 950) return 'S';
+    if (s >= 850) return 'A';
+    if (s >= 700) return 'B';
+    if (s >= 550) return 'C';
+    if (s >= 400) return 'D';
     return 'F';
   };
 
