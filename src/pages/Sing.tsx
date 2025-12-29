@@ -323,12 +323,6 @@ export default function Sing() {
                       </div>
                     )}
 
-                    {/* Remaining Time Display - On top of video */}
-                    {isPlaying && remainingTime > 0 && (
-                      <div className="absolute bottom-4 left-4 z-20 bg-black/70 px-3 py-1.5 rounded-lg text-white text-sm font-medium">
-                        {formatTime(remainingTime)} remaining
-                      </div>
-                    )}
                   </div>
 
                   {/* Score Display - Only in normal mode */}

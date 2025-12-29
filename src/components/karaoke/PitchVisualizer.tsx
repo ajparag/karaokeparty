@@ -14,6 +14,8 @@ export function PitchVisualizer({ isActive, onRhythmData, compact = false }: Pit
   const beatIntervalsRef = useRef<number[]>([]);
   const lastBeatTimeRef = useRef<number>(0);
   const pitchHistoryRef = useRef<number[]>([]);
+  const lastConsistencyRef = useRef<number>(50);
+  const lastReportTimeRef = useRef<number>(0);
   const [hasPermission, setHasPermission] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -180,7 +182,7 @@ export function PitchVisualizer({ isActive, onRhythmData, compact = false }: Pit
         lastBeatTimeRef.current = now;
 
         // Calculate rhythm consistency with more lenient scoring
-        if (beatIntervalsRef.current.length > 3 && onRhythmData) {
+        if (beatIntervalsRef.current.length > 3) {
           const avgInterval = beatIntervalsRef.current.reduce((a, b) => a + b, 0) / beatIntervalsRef.current.length;
           const variance = beatIntervalsRef.current.reduce((sum, interval) => {
             return sum + Math.pow(interval - avgInterval, 2);
@@ -190,11 +192,19 @@ export function PitchVisualizer({ isActive, onRhythmData, compact = false }: Pit
           // More lenient consistency calculation
           const rawConsistency = Math.max(0, 100 - (stdDev / avgInterval * 50));
           const consistency = Math.min(100, rawConsistency * 1.2); // Boost scores
-          
+          lastConsistencyRef.current = consistency;
+        }
+      }
+
+      // Report data regularly (even if no beats detected)
+      if (onRhythmData) {
+        const now = performance.now();
+        if (now - lastReportTimeRef.current > 300) {
+          lastReportTimeRef.current = now;
           onRhythmData({
             beatStrength: normalizedVolume,
-            consistency: consistency,
-            pitchAccuracy: pitchAccuracy,
+            consistency: lastConsistencyRef.current,
+            pitchAccuracy,
           });
         }
       }
