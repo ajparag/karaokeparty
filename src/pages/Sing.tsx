@@ -165,13 +165,24 @@ export default function Sing() {
                     <h2 className="font-semibold text-lg line-clamp-2">{selectedVideo.title}</h2>
                     <p className="text-muted-foreground text-sm">{selectedVideo.channel}</p>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setSelectedVideo(null)}
-                  >
-                    Change Song
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={toggleFullscreen}
+                      className="gap-2"
+                    >
+                      <Maximize className="h-4 w-4" />
+                      Fullscreen
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setSelectedVideo(null)}
+                    >
+                      Change Song
+                    </Button>
+                  </div>
                 </div>
               </Card>
 
