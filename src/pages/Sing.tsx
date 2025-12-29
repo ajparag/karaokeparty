@@ -299,19 +299,22 @@ export default function Sing() {
                   {/* YouTube Player with Floating Score */}
                   <div className={cn(
                     "relative overflow-hidden bg-black",
-                    isFullscreen ? "flex-1 w-full" : "aspect-video rounded-lg"
+                    isFullscreen ? "flex-1 w-full h-full" : "aspect-video rounded-lg"
                   )}>
-                    <YouTubePlayer
-                      videoId={selectedVideo.id}
-                      onPlay={handlePlay}
-                      onPause={handlePause}
-                      onEnd={handleEnd}
-                      onTimeUpdate={handleTimeUpdate}
-                    />
+                    {/* Video fills the entire container */}
+                    <div className="absolute inset-0 z-0">
+                      <YouTubePlayer
+                        videoId={selectedVideo.id}
+                        onPlay={handlePlay}
+                        onPause={handlePause}
+                        onEnd={handleEnd}
+                        onTimeUpdate={handleTimeUpdate}
+                      />
+                    </div>
                     
-                    {/* Floating Score Widget */}
+                    {/* Floating Score Widget - On top of video */}
                     {isPlaying && (
-                      <div className="absolute top-4 right-4 z-10">
+                      <div className="absolute top-4 right-4 z-20">
                         <FloatingScore
                           score={currentScore}
                           pitchAccuracy={pitchAccuracy}
@@ -320,9 +323,9 @@ export default function Sing() {
                       </div>
                     )}
 
-                    {/* Remaining Time Display */}
+                    {/* Remaining Time Display - On top of video */}
                     {isPlaying && remainingTime > 0 && (
-                      <div className="absolute bottom-4 left-4 z-10 bg-black/70 px-3 py-1.5 rounded-lg text-white text-sm font-medium">
+                      <div className="absolute bottom-4 left-4 z-20 bg-black/70 px-3 py-1.5 rounded-lg text-white text-sm font-medium">
                         {formatTime(remainingTime)} remaining
                       </div>
                     )}
