@@ -34,16 +34,16 @@ export default function Sing() {
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const scoreHistoryRef = useRef<number[]>([]);
 
-  const handleSelectVideo = (video: SelectedVideo) => {
+  const handleSelectVideo = useCallback((video: SelectedVideo) => {
     setSelectedVideo(video);
     setShowResults(false);
     setCurrentScore(0);
     setRhythmConsistency(0);
     setPerformanceTime(0);
     scoreHistoryRef.current = [];
-  };
+  }, []);
 
-  const handlePlay = () => {
+  const handlePlay = useCallback(() => {
     setIsPerforming(true);
     setShowResults(false);
     
@@ -51,15 +51,15 @@ export default function Sing() {
     timerRef.current = setInterval(() => {
       setPerformanceTime(prev => prev + 1);
     }, 1000);
-  };
+  }, []);
 
-  const handlePause = () => {
+  const handlePause = useCallback(() => {
     if (timerRef.current) {
       clearInterval(timerRef.current);
     }
-  };
+  }, []);
 
-  const handleEnd = async () => {
+  const handleEnd = useCallback(async () => {
     setIsPerforming(false);
     if (timerRef.current) {
       clearInterval(timerRef.current);
@@ -104,7 +104,7 @@ export default function Sing() {
         });
       }
     }
-  };
+  }, [user, selectedVideo, performanceTime, currentScore, rhythmConsistency, toast]);
 
   const handleRhythmData = useCallback((data: { beatStrength: number; consistency: number }) => {
     // Update score based on rhythm consistency
