@@ -33,7 +33,7 @@ export function FloatingScore({ score, pitchAccuracy, rhythmAccuracy, className 
 
   return (
     <div className={cn(
-      "absolute top-4 right-4 z-20 flex items-center gap-3 px-4 py-3 rounded-2xl",
+      "flex items-center gap-3 px-4 py-3 rounded-2xl",
       "bg-background/80 backdrop-blur-md border border-border/50 shadow-lg",
       "transition-all duration-300",
       className
