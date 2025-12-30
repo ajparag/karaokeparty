@@ -7,17 +7,25 @@ export function useVocalSuppression() {
   const mergerRef = useRef<ChannelMergerNode | null>(null);
   const invertGain1Ref = useRef<GainNode | null>(null);
   const invertGain2Ref = useRef<GainNode | null>(null);
+  const outputGainRef = useRef<GainNode | null>(null);
   const [isEnabled, setIsEnabled] = useState(true);
   const [strength, setStrength] = useState(0.95);
   const connectedRef = useRef(false);
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
 
+  const computeMakeupGain = useCallback((s: number) => {
+    // When L≈R (mono/dual-mono), center-cancel can reduce the entire signal to ~ (1-s).
+    // Apply limited makeup gain so backing track stays audible.
+    const denom = Math.max(0.15, 1 - s);
+    return Math.min(6, 1 / denom);
+  }, []);
+
   const setupVocalSuppression = useCallback((audioElement: HTMLAudioElement) => {
     if (connectedRef.current) return;
-    
+
     try {
       audioElementRef.current = audioElement;
-      
+
       // Create audio context
       const audioContext = new AudioContext();
       audioContextRef.current = audioContext;
@@ -34,15 +42,20 @@ export function useVocalSuppression() {
       const merger = audioContext.createChannelMerger(2);
       mergerRef.current = merger;
 
+      // Output gain (makeup gain) to avoid near-silence on mono/dual-mono tracks
+      const outputGain = audioContext.createGain();
+      outputGain.gain.value = isEnabled ? computeMakeupGain(strength) : 1;
+      outputGainRef.current = outputGain;
+
       // Create gain nodes for center channel removal
       // Left output = L - R * strength
       // Right output = R - L * strength
       const invertGain1 = audioContext.createGain();
-      invertGain1.gain.value = -strength;
+      invertGain1.gain.value = isEnabled ? -strength : 0;
       invertGain1Ref.current = invertGain1;
 
       const invertGain2 = audioContext.createGain();
-      invertGain2.gain.value = -strength;
+      invertGain2.gain.value = isEnabled ? -strength : 0;
       invertGain2Ref.current = invertGain2;
 
       // Connect: source -> splitter
@@ -59,7 +72,8 @@ export function useVocalSuppression() {
       invertGain2.connect(merger, 0, 1); // inverted L -> Right output
 
       // Connect to destination
-      merger.connect(audioContext.destination);
+      merger.connect(outputGain);
+      outputGain.connect(audioContext.destination);
 
       connectedRef.current = true;
       console.log('Vocal suppression setup complete, strength:', strength);
@@ -71,25 +85,36 @@ export function useVocalSuppression() {
         connectedRef.current = true;
       }
     }
-  }, [strength]);
+  }, [computeMakeupGain, isEnabled, strength]);
 
   const updateStrength = useCallback((newStrength: number) => {
     setStrength(newStrength);
+
     if (invertGain1Ref.current && invertGain2Ref.current) {
-      invertGain1Ref.current.gain.value = -newStrength;
-      invertGain2Ref.current.gain.value = -newStrength;
+      const value = isEnabled ? -newStrength : 0;
+      invertGain1Ref.current.gain.value = value;
+      invertGain2Ref.current.gain.value = value;
     }
-  }, []);
+
+    if (outputGainRef.current) {
+      outputGainRef.current.gain.value = isEnabled ? computeMakeupGain(newStrength) : 1;
+    }
+  }, [computeMakeupGain, isEnabled]);
 
   const toggleSuppression = useCallback(() => {
     const newEnabled = !isEnabled;
     setIsEnabled(newEnabled);
+
     if (invertGain1Ref.current && invertGain2Ref.current) {
       const value = newEnabled ? -strength : 0;
       invertGain1Ref.current.gain.value = value;
       invertGain2Ref.current.gain.value = value;
     }
-  }, [isEnabled, strength]);
+
+    if (outputGainRef.current) {
+      outputGainRef.current.gain.value = newEnabled ? computeMakeupGain(strength) : 1;
+    }
+  }, [computeMakeupGain, isEnabled, strength]);
 
   const cleanup = useCallback(() => {
     if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
@@ -101,6 +126,7 @@ export function useVocalSuppression() {
     mergerRef.current = null;
     invertGain1Ref.current = null;
     invertGain2Ref.current = null;
+    outputGainRef.current = null;
     audioElementRef.current = null;
     connectedRef.current = false;
   }, []);
