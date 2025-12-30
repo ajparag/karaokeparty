@@ -102,7 +102,6 @@ const Sing = () => {
           const parsedLyrics = JSON.parse(prefetchedLyrics);
           if (parsedLyrics && parsedLyrics.length > 0) {
             setLyrics(parsedLyrics);
-            toast({ title: "Lyrics loaded!", description: `${parsedLyrics.length} synced lines ready` });
           } else {
             fetchLyrics(parsed.title, parsed.artist);
           }
@@ -257,7 +256,6 @@ const Sing = () => {
       });
       if (data?.lyrics && data.lyrics.length > 0) {
         setLyrics(data.lyrics);
-        toast({ title: "Lyrics loaded!", description: `Found synced lyrics for "${title}"` });
       } else {
         toast({ 
           title: "No lyrics found", 
