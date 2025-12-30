@@ -116,7 +116,6 @@ const Sing = () => {
     if (!track?.audioUrl) return;
 
     const audio = new Audio();
-    audio.crossOrigin = "anonymous";
     audio.src = track.audioUrl;
     audioRef.current = audio;
 
