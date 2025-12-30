@@ -125,12 +125,6 @@ const Sing = () => {
     audio.addEventListener('loadedmetadata', () => {
       setDuration(audio.duration);
       setIsPlayerReady(true);
-      
-      // Setup vocal suppression after audio is loaded
-      if (!vocalSuppressionSetupRef.current) {
-        setupVocalSuppression(audio);
-        vocalSuppressionSetupRef.current = true;
-      }
     });
     
     audio.addEventListener('timeupdate', () => {
@@ -152,7 +146,14 @@ const Sing = () => {
     });
     
     audio.addEventListener('error', (e) => {
-      console.error('Audio error:', e);
+      console.error('Audio error:', {
+        event: e,
+        mediaError: audio.error,
+        readyState: audio.readyState,
+        networkState: audio.networkState,
+        currentSrc: audio.currentSrc,
+        src: audio.src,
+      });
       toast({
         title: "Audio playback error",
         description: "Failed to load audio. Please try another song.",
