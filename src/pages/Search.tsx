@@ -14,7 +14,8 @@ interface Track {
   thumbnail: string;
   duration: number;
   language: string;
-  source: 'jiosaavn' | 'gaana';
+  source: 'deezer';
+  previewUrl?: string;
 }
 
 const Search = () => {
