@@ -14,64 +14,64 @@ interface Track {
   thumbnail: string;
   duration: number;
   language: string;
-  source: 'jiosaavn' | 'gaana';
-  streamUrl?: string;
+  source: 'deezer';
+  previewUrl?: string;
 }
 
-// JioSaavn API (using the public API)
-async function searchJioSaavn(query: string): Promise<Track[]> {
+// Deezer API search
+async function searchDeezer(query: string): Promise<Track[]> {
   try {
     const encodedQuery = encodeURIComponent(query);
     const response = await fetch(
-      `https://saavn.dev/api/search/songs?query=${encodedQuery}&limit=20`
+      `https://api.deezer.com/search?q=${encodedQuery}&limit=30`
     );
     
     if (!response.ok) {
-      console.error('JioSaavn API error:', response.status);
+      console.error('Deezer API error:', response.status);
       return [];
     }
     
     const data = await response.json();
     
-    if (!data.success || !data.data?.results) {
+    if (!data.data || !Array.isArray(data.data)) {
+      console.log('No results from Deezer');
       return [];
     }
     
-    return data.data.results.map((song: any) => ({
-      id: `jiosaavn_${song.id}`,
-      title: song.name || song.title || 'Unknown',
-      artist: song.artists?.primary?.map((a: any) => a.name).join(', ') || 
-              song.primaryArtists || 
-              'Unknown Artist',
-      album: song.album?.name || song.album || '',
-      thumbnail: song.image?.[2]?.url || song.image?.[1]?.url || song.image?.[0]?.url || '',
-      duration: song.duration || 0,
-      language: song.language || 'Hindi',
-      source: 'jiosaavn' as const,
-      streamUrl: song.downloadUrl?.[4]?.url || song.downloadUrl?.[3]?.url || song.downloadUrl?.[2]?.url || '',
+    return data.data.map((track: any) => ({
+      id: `deezer_${track.id}`,
+      title: track.title || 'Unknown',
+      artist: track.artist?.name || 'Unknown Artist',
+      album: track.album?.title || '',
+      thumbnail: track.album?.cover_medium || track.album?.cover_small || '',
+      duration: track.duration || 0,
+      language: 'Unknown',
+      source: 'deezer' as const,
+      previewUrl: track.preview || '',
     }));
   } catch (error) {
-    console.error('JioSaavn search error:', error);
+    console.error('Deezer search error:', error);
     return [];
   }
 }
 
-// Fallback: Search with karaoke/instrumental keywords
+// Search with karaoke/instrumental keywords for better results
 async function searchInstrumental(query: string): Promise<Track[]> {
+  const allTracks: Track[] = [];
+  
+  // Search for karaoke and instrumental versions
   const instrumentalQueries = [
     `${query} karaoke`,
     `${query} instrumental`,
   ];
   
-  const allTracks: Track[] = [];
-  
   for (const q of instrumentalQueries) {
-    const tracks = await searchJioSaavn(q);
+    const tracks = await searchDeezer(q);
     allTracks.push(...tracks);
   }
   
   // Also search the original query
-  const originalTracks = await searchJioSaavn(query);
+  const originalTracks = await searchDeezer(query);
   allTracks.push(...originalTracks);
   
   // Remove duplicates by ID
@@ -101,12 +101,12 @@ serve(async (req) => {
       );
     }
 
-    console.log('Searching for:', query);
+    console.log('Searching Deezer for:', query);
     
     // Search for tracks
     const tracks = await searchInstrumental(query);
     
-    console.log(`Found ${tracks.length} tracks`);
+    console.log(`Found ${tracks.length} tracks from Deezer`);
 
     return new Response(
       JSON.stringify({ tracks }),
