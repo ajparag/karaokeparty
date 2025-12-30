@@ -101,10 +101,7 @@ const Index = () => {
       ?.replace(/\[.*?\]/g, '')
       ?.replace(/karaoke|instrumental|lyrics|official|video|audio|hd|4k/gi, '')
       ?.trim() || '';
-    const cleanArtist = track.artist
-      ?.replace(/- Topic$/i, '')
-      ?.replace(/VEVO$/i, '')
-      ?.trim() || '';
+    const cleanArtist = track.artist?.trim() || '';
     
     setLyricsSearchTitle(cleanTitle);
     setLyricsSearchArtist(cleanArtist);
