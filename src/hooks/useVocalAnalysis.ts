@@ -1,17 +1,20 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { supabase } from '@/integrations/supabase/client';
 
 interface VocalMetrics {
   pitch: number;           // Current detected pitch in Hz
   pitchAccuracy: number;   // 0-100 accuracy score
   rhythm: number;          // 0-100 rhythm consistency
-  diction: number;         // 0-100 clarity score (based on volume consistency)
+  diction: number;         // 0-100 clarity score (based on Whisper transcription)
   volume: number;          // Current volume level 0-1
   isVoiceDetected: boolean;
+  transcribedText?: string; // Latest transcribed text from Whisper
 }
 
 interface UseVocalAnalysisOptions {
   onMetricsUpdate?: (metrics: VocalMetrics) => void;
   targetPitch?: number; // Optional reference pitch to match
+  expectedLyrics?: string; // Current lyrics line for comparison
 }
 
 export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
@@ -22,7 +25,7 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     pitch: 0,
     pitchAccuracy: 0,
     rhythm: 0,
-    diction: 0,
+    diction: 50,
     volume: 0,
     isVoiceDetected: false,
   });
@@ -31,6 +34,10 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
   const analyserRef = useRef<AnalyserNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const animationFrameRef = useRef<number | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const transcriptionIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const lastDictionScoreRef = useRef<number>(50);
   
   // Tracking for scoring
   const pitchHistoryRef = useRef<number[]>([]);
@@ -38,12 +45,89 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
   const beatTimesRef = useRef<number[]>([]);
   const lastBeatTimeRef = useRef<number>(0);
 
+  // Calculate similarity between two strings (Levenshtein-based)
+  const calculateSimilarity = useCallback((str1: string, str2: string): number => {
+    if (!str1 || !str2) return 0;
+    
+    const s1 = str1.toLowerCase().replace(/[^\w\s]/g, '').trim();
+    const s2 = str2.toLowerCase().replace(/[^\w\s]/g, '').trim();
+    
+    if (s1 === s2) return 100;
+    if (!s1 || !s2) return 0;
+    
+    const words1 = s1.split(/\s+/);
+    const words2 = s2.split(/\s+/);
+    
+    let matches = 0;
+    for (const word of words1) {
+      if (words2.some(w => w.includes(word) || word.includes(w))) {
+        matches++;
+      }
+    }
+    
+    return Math.round((matches / Math.max(words1.length, 1)) * 100);
+  }, []);
+
+  // Send audio to Whisper API for transcription
+  const transcribeAudio = useCallback(async () => {
+    if (audioChunksRef.current.length === 0) return;
+    
+    const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+    audioChunksRef.current = []; // Clear chunks for next batch
+    
+    // Skip if too small (less than 1KB - likely silence)
+    if (audioBlob.size < 1000) return;
+    
+    try {
+      // Convert blob to base64
+      const reader = new FileReader();
+      const base64Promise = new Promise<string>((resolve) => {
+        reader.onloadend = () => {
+          const base64 = (reader.result as string).split(',')[1];
+          resolve(base64);
+        };
+      });
+      reader.readAsDataURL(audioBlob);
+      const base64Audio = await base64Promise;
+      
+      const { data, error } = await supabase.functions.invoke('transcribe-audio', {
+        body: { audio: base64Audio }
+      });
+      
+      if (error) {
+        console.error('Transcription error:', error);
+        return;
+      }
+      
+      if (data?.text) {
+        const transcribedText = data.text;
+        
+        // Calculate diction score based on similarity to expected lyrics
+        let dictionScore = 50;
+        if (options.expectedLyrics) {
+          dictionScore = calculateSimilarity(transcribedText, options.expectedLyrics);
+        } else if (transcribedText.length > 0) {
+          // If no expected lyrics, give points for clear speech
+          dictionScore = Math.min(80, 50 + transcribedText.split(/\s+/).length * 5);
+        }
+        
+        lastDictionScoreRef.current = dictionScore;
+        
+        setMetrics(prev => ({
+          ...prev,
+          diction: dictionScore,
+          transcribedText,
+        }));
+      }
+    } catch (err) {
+      console.error('Failed to transcribe:', err);
+    }
+  }, [options.expectedLyrics, calculateSimilarity]);
+
   const detectPitch = useCallback((frequencyData: Uint8Array, sampleRate: number): number => {
-    // Find dominant frequency using autocorrelation-like approach
     let maxIndex = 0;
     let maxValue = 0;
     
-    // Focus on vocal frequency range (80Hz - 1000Hz)
     const minBin = Math.floor(80 / (sampleRate / frequencyData.length));
     const maxBin = Math.floor(1000 / (sampleRate / frequencyData.length));
     
@@ -54,9 +138,8 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       }
     }
     
-    if (maxValue < 100) return 0; // Below noise threshold
+    if (maxValue < 100) return 0;
     
-    // Convert bin index to frequency
     const frequency = (maxIndex * sampleRate) / (frequencyData.length * 2);
     return frequency;
   }, []);
@@ -68,7 +151,6 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
   ): VocalMetrics => {
     const isVoiceDetected = currentVolume > 0.05 && currentPitch > 0;
     
-    // Update histories
     if (isVoiceDetected) {
       pitchHistoryRef.current.push(currentPitch);
       if (pitchHistoryRef.current.length > 50) {
@@ -81,7 +163,6 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       volumeHistoryRef.current.shift();
     }
 
-    // Detect beats (volume peaks)
     if (volumeHistoryRef.current.length > 3) {
       const recent = volumeHistoryRef.current.slice(-3);
       const avg = recent.reduce((a, b) => a + b, 0) / recent.length;
@@ -94,20 +175,17 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       }
     }
 
-    // Calculate pitch accuracy (consistency of pitch)
     let pitchAccuracy = 0;
     if (pitchHistoryRef.current.length > 5) {
       const recentPitches = pitchHistoryRef.current.slice(-10);
       const avgPitch = recentPitches.reduce((a, b) => a + b, 0) / recentPitches.length;
       const variance = recentPitches.reduce((sum, p) => sum + Math.pow(p - avgPitch, 2), 0) / recentPitches.length;
       const stdDev = Math.sqrt(variance);
-      // Lower variance = better pitch control
       const normalizedVariance = Math.min(stdDev / avgPitch, 0.5);
       pitchAccuracy = Math.max(0, 100 - (normalizedVariance * 200));
     }
 
-    // Calculate rhythm score (consistency of beat intervals)
-    let rhythm = 50; // Default
+    let rhythm = 50;
     if (beatTimesRef.current.length > 3) {
       const intervals: number[] = [];
       for (let i = 1; i < beatTimesRef.current.length; i++) {
@@ -116,37 +194,20 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
       const intervalVariance = intervals.reduce((sum, i) => sum + Math.pow(i - avgInterval, 2), 0) / intervals.length;
       const intervalStdDev = Math.sqrt(intervalVariance);
-      // More consistent intervals = better rhythm
       const rhythmScore = Math.max(0, 100 - (intervalStdDev / avgInterval * 100));
-      rhythm = Math.min(100, rhythmScore * 1.2); // Boost a bit
-    }
-
-    // Calculate diction score (based on volume dynamics and clarity)
-    let diction = 50;
-    if (volumeHistoryRef.current.length > 10) {
-      const recentVolumes = volumeHistoryRef.current.slice(-15);
-      const avgVolume = recentVolumes.reduce((a, b) => a + b, 0) / recentVolumes.length;
-      // Good diction = clear volume changes, not monotone
-      const volumeVariance = recentVolumes.reduce((sum, v) => sum + Math.pow(v - avgVolume, 2), 0) / recentVolumes.length;
-      // Some variance is good (dynamic singing), too much is chaotic
-      const normalizedVariance = Math.sqrt(volumeVariance) / (avgVolume + 0.01);
-      if (normalizedVariance > 0.1 && normalizedVariance < 0.8) {
-        diction = 70 + (1 - Math.abs(normalizedVariance - 0.4) / 0.4) * 30;
-      } else {
-        diction = 50 + normalizedVariance * 30;
-      }
-      diction = Math.min(100, Math.max(0, diction));
+      rhythm = Math.min(100, rhythmScore * 1.2);
     }
 
     return {
       pitch: currentPitch,
       pitchAccuracy: isVoiceDetected ? pitchAccuracy : metrics.pitchAccuracy,
       rhythm,
-      diction: isVoiceDetected ? diction : metrics.diction,
+      diction: lastDictionScoreRef.current, // Use Whisper-based diction score
       volume: currentVolume,
       isVoiceDetected,
+      transcribedText: metrics.transcribedText,
     };
-  }, [metrics.pitchAccuracy, metrics.diction]);
+  }, [metrics.pitchAccuracy, metrics.transcribedText]);
 
   const startAnalysis = useCallback(async () => {
     try {
@@ -162,6 +223,23 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       
       streamRef.current = stream;
       setHasPermission(true);
+
+      // Setup MediaRecorder for Whisper transcription
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      mediaRecorderRef.current = mediaRecorder;
+      
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+        }
+      };
+      
+      mediaRecorder.start(1000); // Collect chunks every 1 second
+      
+      // Transcribe every 3 seconds
+      transcriptionIntervalRef.current = setInterval(() => {
+        transcribeAudio();
+      }, 3000);
 
       const audioContext = new AudioContext();
       audioContextRef.current = audioContext;
@@ -183,7 +261,6 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
         analyser.getByteFrequencyData(frequencyData);
         analyser.getByteTimeDomainData(timeData);
 
-        // Calculate volume from time domain data
         let sum = 0;
         for (let i = 0; i < timeData.length; i++) {
           const value = (timeData[i] - 128) / 128;
@@ -191,10 +268,7 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
         }
         const volume = Math.sqrt(sum / timeData.length);
 
-        // Detect pitch
         const pitch = detectPitch(frequencyData, audioContext.sampleRate);
-
-        // Calculate all metrics
         const newMetrics = calculateMetrics(pitch, volume, performance.now());
         
         setMetrics(newMetrics);
@@ -210,12 +284,22 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       setError('Microphone access denied');
       setHasPermission(false);
     }
-  }, [detectPitch, calculateMetrics, options]);
+  }, [detectPitch, calculateMetrics, options, transcribeAudio]);
 
   const stopAnalysis = useCallback(() => {
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
       animationFrameRef.current = null;
+    }
+    
+    if (transcriptionIntervalRef.current) {
+      clearInterval(transcriptionIntervalRef.current);
+      transcriptionIntervalRef.current = null;
+    }
+    
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current = null;
     }
 
     if (streamRef.current) {
@@ -229,9 +313,9 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     }
 
     analyserRef.current = null;
+    audioChunksRef.current = [];
     setIsActive(false);
     
-    // Reset histories
     pitchHistoryRef.current = [];
     volumeHistoryRef.current = [];
     beatTimesRef.current = [];
@@ -241,17 +325,18 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     pitchHistoryRef.current = [];
     volumeHistoryRef.current = [];
     beatTimesRef.current = [];
+    audioChunksRef.current = [];
+    lastDictionScoreRef.current = 50;
     setMetrics({
       pitch: 0,
       pitchAccuracy: 0,
       rhythm: 0,
-      diction: 0,
+      diction: 50,
       volume: 0,
       isVoiceDetected: false,
     });
   }, []);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       stopAnalysis();
