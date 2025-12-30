@@ -1,4 +1,4 @@
-import { useRef, useCallback, useState } from 'react';
+import { useRef, useCallback, useEffect, useState } from "react";
 
 export function useVocalSuppression() {
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -8,10 +8,25 @@ export function useVocalSuppression() {
   const invertGain1Ref = useRef<GainNode | null>(null);
   const invertGain2Ref = useRef<GainNode | null>(null);
   const outputGainRef = useRef<GainNode | null>(null);
+
   const [isEnabled, setIsEnabled] = useState(true);
   const [strength, setStrength] = useState(0.95);
+
+  // Keep stable refs so our callbacks don't change identity when state changes.
+  // This prevents consumers (like Sing.tsx) from recreating the Audio element on every toggle.
+  const isEnabledRef = useRef(true);
+  const strengthRef = useRef(0.95);
+
   const connectedRef = useRef(false);
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    isEnabledRef.current = isEnabled;
+  }, [isEnabled]);
+
+  useEffect(() => {
+    strengthRef.current = strength;
+  }, [strength]);
 
   const computeMakeupGain = useCallback((s: number) => {
     // When L≈R (mono/dual-mono), center-cancel can reduce the entire signal to ~ (1-s).
@@ -20,106 +35,110 @@ export function useVocalSuppression() {
     return Math.min(6, 1 / denom);
   }, []);
 
-  const setupVocalSuppression = useCallback((audioElement: HTMLAudioElement) => {
-    if (connectedRef.current) return;
-
-    try {
-      audioElementRef.current = audioElement;
-
-      // Create audio context
-      const audioContext = new AudioContext();
-      audioContextRef.current = audioContext;
-
-      // Create source from audio element
-      const source = audioContext.createMediaElementSource(audioElement);
-      sourceNodeRef.current = source;
-
-      // Create channel splitter (stereo to 2 mono channels)
-      const splitter = audioContext.createChannelSplitter(2);
-      splitterRef.current = splitter;
-
-      // Create channel merger (2 mono to stereo)
-      const merger = audioContext.createChannelMerger(2);
-      mergerRef.current = merger;
-
-      // Output gain (makeup gain) to avoid near-silence on mono/dual-mono tracks
-      const outputGain = audioContext.createGain();
-      outputGain.gain.value = isEnabled ? computeMakeupGain(strength) : 1;
-      outputGainRef.current = outputGain;
-
-      // Create gain nodes for center channel removal
-      // Left output = L - R * strength
-      // Right output = R - L * strength
-      const invertGain1 = audioContext.createGain();
-      invertGain1.gain.value = isEnabled ? -strength : 0;
-      invertGain1Ref.current = invertGain1;
-
-      const invertGain2 = audioContext.createGain();
-      invertGain2.gain.value = isEnabled ? -strength : 0;
-      invertGain2Ref.current = invertGain2;
-
-      // Connect: source -> splitter
-      source.connect(splitter);
-
-      // Left channel path: L direct + (-R * strength)
-      splitter.connect(merger, 0, 0); // L -> Left output
-      splitter.connect(invertGain1, 1); // R -> inverter
-      invertGain1.connect(merger, 0, 0); // inverted R -> Left output
-
-      // Right channel path: R direct + (-L * strength)
-      splitter.connect(merger, 1, 1); // R -> Right output
-      splitter.connect(invertGain2, 0); // L -> inverter
-      invertGain2.connect(merger, 0, 1); // inverted L -> Right output
-
-      // Connect to destination
-      merger.connect(outputGain);
-      outputGain.connect(audioContext.destination);
-
-      connectedRef.current = true;
-      console.log('Vocal suppression setup complete, strength:', strength);
-    } catch (error) {
-      console.error('Failed to setup vocal suppression:', error);
-      // If setup fails, try to connect source directly to output
-      if (sourceNodeRef.current && audioContextRef.current) {
-        sourceNodeRef.current.connect(audioContextRef.current.destination);
-        connectedRef.current = true;
+  const applyNodeParams = useCallback(
+    (nextEnabled: boolean, nextStrength: number) => {
+      if (invertGain1Ref.current && invertGain2Ref.current) {
+        const value = nextEnabled ? -nextStrength : 0;
+        invertGain1Ref.current.gain.value = value;
+        invertGain2Ref.current.gain.value = value;
       }
-    }
-  }, [computeMakeupGain, isEnabled, strength]);
 
-  const updateStrength = useCallback((newStrength: number) => {
-    setStrength(newStrength);
+      if (outputGainRef.current) {
+        outputGainRef.current.gain.value = nextEnabled ? computeMakeupGain(nextStrength) : 1;
+      }
+    },
+    [computeMakeupGain]
+  );
 
-    if (invertGain1Ref.current && invertGain2Ref.current) {
-      const value = isEnabled ? -newStrength : 0;
-      invertGain1Ref.current.gain.value = value;
-      invertGain2Ref.current.gain.value = value;
-    }
+  const setupVocalSuppression = useCallback(
+    (audioElement: HTMLAudioElement) => {
+      if (connectedRef.current) return;
 
-    if (outputGainRef.current) {
-      outputGainRef.current.gain.value = isEnabled ? computeMakeupGain(newStrength) : 1;
-    }
-  }, [computeMakeupGain, isEnabled]);
+      try {
+        audioElementRef.current = audioElement;
+
+        // Create audio context
+        const audioContext = new AudioContext();
+        audioContextRef.current = audioContext;
+
+        // Create source from audio element
+        const source = audioContext.createMediaElementSource(audioElement);
+        sourceNodeRef.current = source;
+
+        // Create channel splitter (stereo to 2 mono channels)
+        const splitter = audioContext.createChannelSplitter(2);
+        splitterRef.current = splitter;
+
+        // Create channel merger (2 mono to stereo)
+        const merger = audioContext.createChannelMerger(2);
+        mergerRef.current = merger;
+
+        // Output gain (makeup gain) to avoid near-silence on mono/dual-mono tracks
+        const outputGain = audioContext.createGain();
+        outputGainRef.current = outputGain;
+
+        // Create gain nodes for center channel removal
+        // Left output = L - R * strength
+        // Right output = R - L * strength
+        const invertGain1 = audioContext.createGain();
+        invertGain1Ref.current = invertGain1;
+
+        const invertGain2 = audioContext.createGain();
+        invertGain2Ref.current = invertGain2;
+
+        // Connect: source -> splitter
+        source.connect(splitter);
+
+        // Left channel path: L direct + (-R * strength)
+        splitter.connect(merger, 0, 0); // L -> Left output
+        splitter.connect(invertGain1, 1); // R -> inverter
+        invertGain1.connect(merger, 0, 0); // inverted R -> Left output
+
+        // Right channel path: R direct + (-L * strength)
+        splitter.connect(merger, 1, 1); // R -> Right output
+        splitter.connect(invertGain2, 0); // L -> inverter
+        invertGain2.connect(merger, 0, 1); // inverted L -> Right output
+
+        // Connect to destination
+        merger.connect(outputGain);
+        outputGain.connect(audioContext.destination);
+
+        // Apply initial params
+        applyNodeParams(isEnabledRef.current, strengthRef.current);
+
+        connectedRef.current = true;
+        console.log("Vocal suppression setup complete, strength:", strengthRef.current);
+      } catch (error) {
+        console.error("Failed to setup vocal suppression:", error);
+
+        // If setup fails, just let the audio element play normally (no WebAudio graph).
+        connectedRef.current = false;
+      }
+    },
+    [applyNodeParams]
+  );
+
+  const updateStrength = useCallback(
+    (newStrength: number) => {
+      setStrength(newStrength);
+      strengthRef.current = newStrength;
+      applyNodeParams(isEnabledRef.current, newStrength);
+    },
+    [applyNodeParams]
+  );
 
   const toggleSuppression = useCallback(() => {
-    const newEnabled = !isEnabled;
-    setIsEnabled(newEnabled);
-
-    if (invertGain1Ref.current && invertGain2Ref.current) {
-      const value = newEnabled ? -strength : 0;
-      invertGain1Ref.current.gain.value = value;
-      invertGain2Ref.current.gain.value = value;
-    }
-
-    if (outputGainRef.current) {
-      outputGainRef.current.gain.value = newEnabled ? computeMakeupGain(strength) : 1;
-    }
-  }, [computeMakeupGain, isEnabled, strength]);
+    const nextEnabled = !isEnabledRef.current;
+    isEnabledRef.current = nextEnabled;
+    setIsEnabled(nextEnabled);
+    applyNodeParams(nextEnabled, strengthRef.current);
+  }, [applyNodeParams]);
 
   const cleanup = useCallback(() => {
-    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+    if (audioContextRef.current && audioContextRef.current.state !== "closed") {
       audioContextRef.current.close();
     }
+
     audioContextRef.current = null;
     sourceNodeRef.current = null;
     splitterRef.current = null;
@@ -128,16 +147,17 @@ export function useVocalSuppression() {
     invertGain2Ref.current = null;
     outputGainRef.current = null;
     audioElementRef.current = null;
+
     connectedRef.current = false;
   }, []);
 
   const resumeContext = useCallback(async () => {
-    if (audioContextRef.current?.state === 'suspended') {
+    if (audioContextRef.current?.state === "suspended") {
       try {
         await audioContextRef.current.resume();
-        console.log('Audio context resumed');
+        console.log("Audio context resumed");
       } catch (error) {
-        console.error('Failed to resume audio context:', error);
+        console.error("Failed to resume audio context:", error);
       }
     }
   }, []);
@@ -152,3 +172,4 @@ export function useVocalSuppression() {
     strength,
   };
 }
+
