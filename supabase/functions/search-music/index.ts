@@ -10,132 +10,104 @@ interface Track {
   id: string;
   title: string;
   artist: string;
-  album: string;
   thumbnail: string;
-  duration: number;
-  language: string;
-  source: 'deezer';
-  previewUrl?: string;
+  duration: string;
+  source: 'youtube';
+  videoId: string;
 }
 
-// Simple in-memory cache to reduce repeat calls & rate limiting.
-// IMPORTANT: do NOT cache empty results (Deezer can intermittently return 0 results).
-const CACHE_TTL_OK_MS = 5 * 60_000; // 5 min for successful results
-const cache = new Map<string, { ts: number; ttl: number; tracks: Track[] }>();
-
-function getCache(key: string): Track[] | null {
-  const hit = cache.get(key);
-  if (!hit) return null;
-  if (Date.now() - hit.ts > hit.ttl) {
-    cache.delete(key);
-    return null;
-  }
-  return hit.tracks;
-}
-
-function setCache(key: string, tracks: Track[]) {
-  if (!tracks.length) return; // never cache empty results
-  cache.set(key, { ts: Date.now(), ttl: CACHE_TTL_OK_MS, tracks });
-}
-
-// Deezer API search (single attempt; no cache)
-async function searchDeezerOnce(q: string): Promise<Track[]> {
-  const encodedQuery = encodeURIComponent(q);
-
-  const response = await fetch(
-    `https://api.deezer.com/search?q=${encodedQuery}&index=0&limit=30`,
-    {
-      headers: {
-        Accept: 'application/json',
-        'User-Agent': 'LovableKaraoke/1.0 (+https://lovable.dev)',
-      },
-    }
-  );
-
-  if (!response.ok) {
-    console.error('Deezer API error:', response.status);
+// YouTube Data API search
+async function searchYouTube(query: string): Promise<Track[]> {
+  const apiKey = Deno.env.get('YOUTUBE_API_KEY');
+  
+  if (!apiKey) {
+    console.error('YOUTUBE_API_KEY not configured');
     return [];
   }
-
-  const raw = await response.text();
-  let data: any;
-  try {
-    data = JSON.parse(raw);
-  } catch {
-    console.error('Deezer returned non-JSON response (first 200 chars):', raw.slice(0, 200));
-    return [];
-  }
-
-  if (data?.error) {
-    console.error('Deezer API payload error:', data.error);
-    return [];
-  }
-
-  if (!data?.data || !Array.isArray(data.data)) {
-    console.error('Unexpected Deezer payload (no data array):', data);
-    return [];
-  }
-
-  return data.data.map((track: any) => ({
-    id: `deezer_${track.id}`,
-    title: track.title || 'Unknown',
-    artist: track.artist?.name || 'Unknown Artist',
-    album: track.album?.title || '',
-    thumbnail: track.album?.cover_medium || track.album?.cover_small || '',
-    duration: track.duration || 0,
-    language: 'Unknown',
-    source: 'deezer' as const,
-    previewUrl: track.preview || '',
-  }));
-}
-
-// Deezer API search (with cache + one retry on empty)
-async function searchDeezer(query: string): Promise<Track[]> {
-  const q = query.trim();
-  if (!q) return [];
-
-  const cacheKey = `deezer:${q.toLowerCase()}`;
-  const cached = getCache(cacheKey);
-  if (cached) return cached;
 
   try {
-    const first = await searchDeezerOnce(q);
-    if (first.length) {
-      setCache(cacheKey, first);
-      return first;
+    const searchQuery = encodeURIComponent(`${query} karaoke OR instrumental`);
+    
+    // Search for videos
+    const searchResponse = await fetch(
+      `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=20&q=${searchQuery}&type=video&videoCategoryId=10&key=${apiKey}`,
+      {
+        headers: {
+          Accept: 'application/json',
+        },
+      }
+    );
+
+    if (!searchResponse.ok) {
+      const errorText = await searchResponse.text();
+      console.error('YouTube API error:', searchResponse.status, errorText);
+      return [];
     }
 
-    // Retry once if Deezer returns an empty set (happens intermittently).
-    await new Promise((r) => setTimeout(r, 250));
-    const second = await searchDeezerOnce(q);
-    if (second.length) setCache(cacheKey, second);
-    return second;
+    const searchData = await searchResponse.json();
+
+    if (!searchData.items || !Array.isArray(searchData.items)) {
+      console.error('No items in YouTube response');
+      return [];
+    }
+
+    // Get video details for duration
+    const videoIds = searchData.items.map((item: any) => item.id.videoId).join(',');
+    
+    const detailsResponse = await fetch(
+      `https://www.googleapis.com/youtube/v3/videos?part=contentDetails,snippet&id=${videoIds}&key=${apiKey}`,
+      {
+        headers: {
+          Accept: 'application/json',
+        },
+      }
+    );
+
+    const detailsData = await detailsResponse.json();
+    const detailsMap = new Map<string, any>();
+    
+    if (detailsData.items) {
+      detailsData.items.forEach((item: any) => {
+        detailsMap.set(item.id, item);
+      });
+    }
+
+    const tracks: Track[] = searchData.items.map((item: any) => {
+      const videoId = item.id.videoId;
+      const details = detailsMap.get(videoId);
+      const duration = details?.contentDetails?.duration || 'PT0M0S';
+      
+      // Parse ISO 8601 duration to readable format
+      const durationMatch = duration.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+      let formattedDuration = '0:00';
+      if (durationMatch) {
+        const hours = parseInt(durationMatch[1] || '0');
+        const minutes = parseInt(durationMatch[2] || '0');
+        const seconds = parseInt(durationMatch[3] || '0');
+        if (hours > 0) {
+          formattedDuration = `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+        } else {
+          formattedDuration = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+        }
+      }
+
+      return {
+        id: `youtube_${videoId}`,
+        title: item.snippet.title || 'Unknown',
+        artist: item.snippet.channelTitle || 'Unknown Artist',
+        thumbnail: item.snippet.thumbnails?.medium?.url || item.snippet.thumbnails?.default?.url || '',
+        duration: formattedDuration,
+        source: 'youtube' as const,
+        videoId: videoId,
+      };
+    });
+
+    console.log(`Found ${tracks.length} tracks from YouTube`);
+    return tracks;
   } catch (error) {
-    console.error('Deezer search error:', error);
+    console.error('YouTube search error:', error);
     return [];
   }
-}
-
-// Search with minimal extra calls to avoid rate limits
-async function searchInstrumental(query: string): Promise<Track[]> {
-  const primary = await searchDeezer(query);
-
-  // If we already got decent results, don't spam extra queries.
-  if (primary.length >= 8) return primary.slice(0, 30);
-
-  const extraQueries = [`${query} instrumental`, `${query} karaoke`];
-  const allTracks: Track[] = [...primary];
-
-  for (const q of extraQueries) {
-    const tracks = await searchDeezer(q);
-    allTracks.push(...tracks);
-
-    // Early exit once we have enough.
-    if (allTracks.length >= 30) break;
-  }
-
-  const uniqueTracks = Array.from(new Map(allTracks.map((t) => [t.id, t])).values());
-  return uniqueTracks.slice(0, 30);
 }
 
 serve(async (req) => {
@@ -157,12 +129,11 @@ serve(async (req) => {
       );
     }
 
-    console.log('Searching Deezer for:', query);
+    console.log('Searching YouTube for:', query);
     
-    // Search for tracks
-    const tracks = await searchInstrumental(query);
+    const tracks = await searchYouTube(query);
     
-    console.log(`Found ${tracks.length} tracks from Deezer`);
+    console.log(`Returning ${tracks.length} tracks`);
 
     return new Response(
       JSON.stringify({ tracks }),
