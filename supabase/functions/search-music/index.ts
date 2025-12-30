@@ -24,18 +24,12 @@ function formatDuration(seconds: number): string {
 }
 
 // JioSaavn API search
-async function searchSaavn(query: string, filter: string = 'all'): Promise<Track[]> {
+async function searchSaavn(query: string): Promise<Track[]> {
   try {
-    // Modify query based on filter
-    let searchQuery = query;
-    if (filter === 'instrumental') {
-      searchQuery = `${query} instrumental karaoke`;
-    }
-    
-    const encodedQuery = encodeURIComponent(searchQuery);
+    const searchQuery = encodeURIComponent(query);
     
     const response = await fetch(
-      `https://saavn.sumit.co/api/search/songs?query=${encodedQuery}&page=0&limit=30`,
+      `https://saavn.sumit.co/api/search/songs?query=${searchQuery}&page=0&limit=20`,
       {
         headers: {
           Accept: 'application/json',
@@ -56,7 +50,7 @@ async function searchSaavn(query: string, filter: string = 'all'): Promise<Track
       return [];
     }
 
-    let tracks: Track[] = data.data.results.map((song: any) => {
+    const tracks: Track[] = data.data.results.map((song: any) => {
       // Get the highest quality audio URL (prefer 320kbps)
       const downloadUrls = song.downloadUrl || [];
       const audioUrl = downloadUrls.find((d: any) => d.quality === '320kbps')?.url 
@@ -73,7 +67,7 @@ async function searchSaavn(query: string, filter: string = 'all'): Promise<Track
         || '';
 
       // Get artist names
-      const artists = song.artists?.primary?.map((a: any) => a.name).join(', ')
+      const artists = song.artists?.primary?.map((a: any) => a.name).join(', ') 
         || song.artists?.all?.map((a: any) => a.name).join(', ')
         || 'Unknown Artist';
 
@@ -86,20 +80,11 @@ async function searchSaavn(query: string, filter: string = 'all'): Promise<Track
         source: 'saavn' as const,
         audioUrl: audioUrl,
         album: song.album?.name || '',
-        isInstrumental: (song.name || '').toLowerCase().includes('instrumental') || 
-                        (song.name || '').toLowerCase().includes('karaoke'),
       };
     });
 
-    // Apply filter
-    if (filter === 'instrumental') {
-      tracks = tracks.filter((t: any) => t.isInstrumental);
-    } else if (filter === 'original') {
-      tracks = tracks.filter((t: any) => !t.isInstrumental);
-    }
-
-    console.log(`Found ${tracks.length} tracks from Saavn (filter: ${filter})`);
-    return tracks.slice(0, 20); // Limit to 20 results
+    console.log(`Found ${tracks.length} tracks from Saavn`);
+    return tracks;
   } catch (error) {
     console.error('Saavn search error:', error);
     return [];
@@ -113,7 +98,7 @@ serve(async (req) => {
   }
 
   try {
-    const { query, filter = 'all' } = await req.json();
+    const { query } = await req.json();
     
     if (!query || typeof query !== 'string') {
       return new Response(
@@ -125,9 +110,9 @@ serve(async (req) => {
       );
     }
 
-    console.log('Searching Saavn for:', query, 'with filter:', filter);
+    console.log('Searching Saavn for:', query);
     
-    const tracks = await searchSaavn(query, filter);
+    const tracks = await searchSaavn(query);
     
     console.log(`Returning ${tracks.length} tracks`);
 
