@@ -1,10 +1,1 @@
-project_id = "ludkqysfdrmikmhbfyqy"
-
-[functions.search-music]
-verify_jwt = false
-
-[functions.fetch-lyrics]
-verify_jwt = false
-
-[functions.transcribe-audio]
-verify_jwt = false
+project_id = "wnfgqlywaecvbptjvktt"
