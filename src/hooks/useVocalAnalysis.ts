@@ -38,6 +38,8 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
   const audioChunksRef = useRef<Blob[]>([]);
   const transcriptionIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastDictionScoreRef = useRef<number>(50);
+  const transcriptionDisabledRef = useRef(false);
+  const transcriptionDisabledReasonRef = useRef<string | null>(null);
   
   // Tracking for scoring
   const pitchHistoryRef = useRef<number[]>([]);
@@ -70,14 +72,15 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
 
   // Send audio to Whisper API for transcription
   const transcribeAudio = useCallback(async () => {
+    if (transcriptionDisabledRef.current) return;
     if (audioChunksRef.current.length === 0) return;
-    
+
     const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
     audioChunksRef.current = []; // Clear chunks for next batch
-    
+
     // Skip if too small (less than 1KB - likely silence)
     if (audioBlob.size < 1000) return;
-    
+
     try {
       // Convert blob to base64
       const reader = new FileReader();
@@ -89,19 +92,42 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       });
       reader.readAsDataURL(audioBlob);
       const base64Audio = await base64Promise;
-      
+
       const { data, error } = await supabase.functions.invoke('transcribe-audio', {
-        body: { audio: base64Audio }
+        body: { audio: base64Audio },
       });
-      
+
       if (error) {
-        console.error('Transcription error:', error);
+        const status =
+          (error as any)?.context?.status ??
+          (error as any)?.status ??
+          (typeof (error as any)?.message === 'string' && (error as any).message.match(/\b(402|429)\b/)?.[1]
+            ? Number((error as any).message.match(/\b(402|429)\b/)?.[1])
+            : undefined);
+
+        // Disable repeated failing calls (prevents spamming the function when quota/rate-limited)
+        if (status === 402 || status === 429) {
+          transcriptionDisabledRef.current = true;
+          transcriptionDisabledReasonRef.current =
+            status === 402
+              ? 'Transcription requires credits (402)'
+              : 'Transcription rate-limited / out of quota (429)';
+
+          if (transcriptionIntervalRef.current) {
+            clearInterval(transcriptionIntervalRef.current);
+            transcriptionIntervalRef.current = null;
+          }
+
+          console.warn('Disabling transcription:', transcriptionDisabledReasonRef.current);
+        } else {
+          console.error('Transcription error:', error);
+        }
         return;
       }
-      
+
       if (data?.text) {
         const transcribedText = data.text;
-        
+
         // Calculate diction score based on similarity to expected lyrics
         let dictionScore = 50;
         if (options.expectedLyrics) {
@@ -110,10 +136,10 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
           // If no expected lyrics, give points for clear speech
           dictionScore = Math.min(80, 50 + transcribedText.split(/\s+/).length * 5);
         }
-        
+
         lastDictionScoreRef.current = dictionScore;
-        
-        setMetrics(prev => ({
+
+        setMetrics((prev) => ({
           ...prev,
           diction: dictionScore,
           transcribedText,
