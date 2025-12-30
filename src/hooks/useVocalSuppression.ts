@@ -9,13 +9,15 @@ export function useVocalSuppression() {
   const invertGain2Ref = useRef<GainNode | null>(null);
   const outputGainRef = useRef<GainNode | null>(null);
 
-  const [isEnabled, setIsEnabled] = useState(true);
+  // Default OFF to prioritize reliable playback; user can enable suppression explicitly.
+  const [isEnabled, setIsEnabled] = useState(false);
   const [strength, setStrength] = useState(0.95);
 
   // Keep stable refs so our callbacks don't change identity when state changes.
   // This prevents consumers (like Sing.tsx) from recreating the Audio element on every toggle.
-  const isEnabledRef = useRef(true);
+  const isEnabledRef = useRef(false);
   const strengthRef = useRef(0.95);
+
 
   const connectedRef = useRef(false);
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
