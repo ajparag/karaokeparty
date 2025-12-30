@@ -1,13 +1,9 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Layout } from '@/components/layout/Layout';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { useNavigate, Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { ScoreDisplay } from '@/components/karaoke/ScoreDisplay';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
-import { Music, Calendar, Clock, Trash2, TrendingUp } from 'lucide-react';
-import { Skeleton } from '@/components/ui/skeleton';
+import { Music, Calendar, Clock, Trash2, TrendingUp, ArrowLeft, Mic } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import {
   AlertDialog,
@@ -30,6 +26,7 @@ interface ScoreEntry {
   score: number;
   rating: string;
   rhythm_accuracy: number | null;
+  timing_accuracy: number | null;
   duration_seconds: number | null;
   created_at: string;
 }
@@ -53,9 +50,7 @@ export default function History() {
       return;
     }
 
-    if (user) {
-      fetchScores();
-    }
+    if (user) fetchScores();
   }, [user, authLoading, navigate]);
 
   const fetchScores = async () => {
@@ -71,7 +66,6 @@ export default function History() {
     if (!error && data) {
       setScores(data);
       
-      // Calculate stats
       if (data.length > 0) {
         const totalScore = data.reduce((sum, s) => sum + s.score, 0);
         const totalTime = data.reduce((sum, s) => sum + (s.duration_seconds || 0), 0);
@@ -90,17 +84,10 @@ export default function History() {
     const { error } = await supabase.from('scores').delete().eq('id', id);
     
     if (error) {
-      toast({
-        title: 'Error',
-        description: 'Failed to delete score.',
-        variant: 'destructive',
-      });
+      toast({ title: 'Failed to delete score', variant: 'destructive' });
     } else {
       setScores(scores.filter(s => s.id !== id));
-      toast({
-        title: 'Score Deleted',
-        description: 'The score has been removed from your history.',
-      });
+      toast({ title: 'Score deleted' });
     }
   };
 
@@ -111,133 +98,95 @@ export default function History() {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
+  const getRatingColor = (rating: string) => {
+    const colors: Record<string, string> = {
+      'S': 'text-score-perfect bg-score-perfect/20',
+      'A': 'text-score-great bg-score-great/20',
+      'B': 'text-score-good bg-score-good/20',
+      'C': 'text-score-ok bg-score-ok/20',
+      'D': 'text-score-ok bg-score-ok/20',
+      'F': 'text-score-miss bg-score-miss/20',
+    };
+    return colors[rating] || 'text-foreground bg-muted';
+  };
+
   if (authLoading) {
     return (
-      <Layout>
-        <div className="flex items-center justify-center min-h-[50vh]">
-          <div className="animate-pulse text-muted-foreground">Loading...</div>
-        </div>
-      </Layout>
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="animate-pulse text-muted-foreground">Loading...</div>
+      </div>
     );
   }
 
   return (
-    <Layout>
-      <div className="space-y-8">
-        <div className="text-center">
-          <h1 className="font-display text-3xl font-bold mb-2">Your History</h1>
-          <p className="text-muted-foreground">Track your singing journey</p>
+    <div className="min-h-screen bg-background">
+      {/* Header */}
+      <header className="glass border-b border-border p-4 sticky top-0 z-50">
+        <div className="max-w-4xl mx-auto flex items-center gap-4">
+          <Link to="/">
+            <Button variant="ghost" size="icon">
+              <ArrowLeft className="w-5 h-5" />
+            </Button>
+          </Link>
+          <div>
+            <h1 className="font-semibold text-xl">Your History</h1>
+            <p className="text-sm text-muted-foreground">Track your singing journey</p>
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-4xl mx-auto p-4 md:p-8 space-y-6">
+        {/* Stats */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <StatCard icon={<Music className="h-5 w-5 text-primary" />} value={stats.totalSongs} label="Songs" />
+          <StatCard icon={<TrendingUp className="h-5 w-5 text-accent" />} value={stats.averageScore} label="Avg Score" />
+          <StatCard icon={<TrendingUp className="h-5 w-5 text-score-perfect" />} value={stats.bestScore} label="Best Score" />
+          <StatCard icon={<Clock className="h-5 w-5 text-muted-foreground" />} value={formatDuration(stats.totalTime)} label="Total Time" />
         </div>
 
-        {/* Stats Cards */}
-        <div className="grid gap-4 md:grid-cols-4">
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center">
-                  <Music className="h-5 w-5 text-primary" />
-                </div>
-                <div>
-                  <div className="text-2xl font-display font-bold">{stats.totalSongs}</div>
-                  <div className="text-sm text-muted-foreground">Songs Performed</div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+        {/* Score List */}
+        <div className="bg-card border border-border rounded-xl p-4 md:p-6">
+          <h2 className="font-semibold text-lg mb-4">Performance History</h2>
           
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="h-10 w-10 rounded-xl bg-accent/10 flex items-center justify-center">
-                  <TrendingUp className="h-5 w-5 text-accent" />
-                </div>
-                <div>
-                  <div className="text-2xl font-display font-bold">{stats.averageScore}</div>
-                  <div className="text-sm text-muted-foreground">Average Score</div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="h-10 w-10 rounded-xl bg-score-s/10 flex items-center justify-center">
-                  <TrendingUp className="h-5 w-5 text-score-s" />
-                </div>
-                <div>
-                  <div className="text-2xl font-display font-bold">{stats.bestScore}</div>
-                  <div className="text-sm text-muted-foreground">Best Score</div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="h-10 w-10 rounded-xl bg-muted flex items-center justify-center">
-                  <Clock className="h-5 w-5 text-muted-foreground" />
-                </div>
-                <div>
-                  <div className="text-2xl font-display font-bold">{formatDuration(stats.totalTime)}</div>
-                  <div className="text-sm text-muted-foreground">Total Time</div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Score History */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Performance History</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {loading ? (
-              Array(3).fill(0).map((_, i) => (
-                <div key={i} className="flex items-center gap-4 p-4 rounded-xl bg-muted/30">
-                  <Skeleton className="h-16 w-16 rounded-lg" />
-                  <div className="flex-1">
-                    <Skeleton className="h-5 w-48 mb-2" />
-                    <Skeleton className="h-4 w-32" />
-                  </div>
-                  <Skeleton className="h-10 w-20" />
-                </div>
-              ))
-            ) : scores.length === 0 ? (
-              <div className="text-center py-12">
-                <Music className="h-16 w-16 text-muted-foreground/30 mx-auto mb-4" />
-                <h3 className="font-display text-xl font-semibold mb-2">No performances yet</h3>
-                <p className="text-muted-foreground mb-4">Start singing to build your history!</p>
-                <Button onClick={() => navigate('/sing')} className="gradient-primary">
+          {loading ? (
+            <div className="space-y-3">
+              {Array(3).fill(0).map((_, i) => (
+                <div key={i} className="animate-shimmer h-20 rounded-lg" />
+              ))}
+            </div>
+          ) : scores.length === 0 ? (
+            <div className="text-center py-12">
+              <Mic className="h-16 w-16 text-muted-foreground/30 mx-auto mb-4" />
+              <h3 className="text-xl font-semibold mb-2">No performances yet</h3>
+              <p className="text-muted-foreground mb-4">Start singing to build your history!</p>
+              <Link to="/search">
+                <Button className="gradient-primary text-primary-foreground">
+                  <Music className="w-4 h-4 mr-2" />
                   Start Singing
                 </Button>
-              </div>
-            ) : (
-              scores.map((score) => (
+              </Link>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {scores.map((score) => (
                 <div
                   key={score.id}
                   className="flex items-center gap-4 p-4 rounded-xl bg-muted/30 hover:bg-muted/50 transition-colors"
                 >
                   {score.thumbnail_url ? (
-                    <img
-                      src={score.thumbnail_url}
-                      alt={score.song_title}
-                      className="h-16 w-16 rounded-lg object-cover"
-                    />
+                    <img src={score.thumbnail_url} alt={score.song_title} className="h-14 w-14 rounded-lg object-cover" />
                   ) : (
-                    <div className="h-16 w-16 rounded-lg bg-muted flex items-center justify-center">
-                      <Music className="h-6 w-6 text-muted-foreground" />
+                    <div className="h-14 w-14 rounded-lg bg-muted flex items-center justify-center">
+                      <Music className="h-5 w-5 text-muted-foreground" />
                     </div>
                   )}
                   
                   <div className="flex-1 min-w-0">
                     <h3 className="font-medium truncate">{score.song_title}</h3>
                     {score.song_artist && (
-                      <p className="text-sm text-muted-foreground">{score.song_artist}</p>
+                      <p className="text-sm text-muted-foreground truncate">{score.song_artist}</p>
                     )}
-                    <div className="flex items-center gap-4 text-xs text-muted-foreground mt-1">
+                    <div className="flex items-center gap-3 text-xs text-muted-foreground mt-1">
                       <span className="flex items-center gap-1">
                         <Calendar className="h-3 w-3" />
                         {format(new Date(score.created_at), 'MMM d, yyyy')}
@@ -251,11 +200,16 @@ export default function History() {
                     </div>
                   </div>
                   
-                  <ScoreDisplay score={score.score} rating={score.rating} size="sm" />
+                  <div className="text-right shrink-0">
+                    <span className={`inline-block px-3 py-1 rounded-full text-sm font-bold ${getRatingColor(score.rating)}`}>
+                      {score.rating}
+                    </span>
+                    <div className="text-sm text-muted-foreground mt-1">{score.score}</div>
+                  </div>
                   
                   <AlertDialog>
                     <AlertDialogTrigger asChild>
-                      <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-destructive">
+                      <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-destructive shrink-0">
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     </AlertDialogTrigger>
@@ -263,23 +217,43 @@ export default function History() {
                       <AlertDialogHeader>
                         <AlertDialogTitle>Delete this score?</AlertDialogTitle>
                         <AlertDialogDescription>
-                          This action cannot be undone. This will permanently delete this performance from your history.
+                          This will permanently delete this performance from your history.
                         </AlertDialogDescription>
                       </AlertDialogHeader>
                       <AlertDialogFooter>
                         <AlertDialogCancel>Cancel</AlertDialogCancel>
-                        <AlertDialogAction onClick={() => deleteScore(score.id)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                        <AlertDialogAction onClick={() => deleteScore(score.id)} className="bg-destructive text-destructive-foreground">
                           Delete
                         </AlertDialogAction>
                       </AlertDialogFooter>
                     </AlertDialogContent>
                   </AlertDialog>
                 </div>
-              ))
-            )}
-          </CardContent>
-        </Card>
-      </div>
-    </Layout>
+              ))}
+            </div>
+          )}
+        </div>
+      </main>
+    </div>
   );
 }
+
+interface StatCardProps {
+  icon: React.ReactNode;
+  value: string | number;
+  label: string;
+}
+
+const StatCard = ({ icon, value, label }: StatCardProps) => (
+  <div className="bg-card border border-border rounded-xl p-4">
+    <div className="flex items-center gap-3">
+      <div className="h-10 w-10 rounded-xl bg-muted flex items-center justify-center shrink-0">
+        {icon}
+      </div>
+      <div className="min-w-0">
+        <div className="text-xl font-bold truncate">{value}</div>
+        <div className="text-xs text-muted-foreground">{label}</div>
+      </div>
+    </div>
+  </div>
+);

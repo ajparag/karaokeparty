@@ -1,11 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Layout } from '@/components/layout/Layout';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { ScoreDisplay } from '@/components/karaoke/ScoreDisplay';
+import { Link } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
-import { Trophy, Medal, Award, Music } from 'lucide-react';
-import { Skeleton } from '@/components/ui/skeleton';
+import { Trophy, Medal, Award, Music, ArrowLeft } from 'lucide-react';
 
 interface LeaderboardEntry {
   id: string;
@@ -36,102 +33,90 @@ export default function Leaderboard() {
     const fetchLeaderboard = async () => {
       setLoading(true);
       
-      // Fetch top users by total score
-      const { data: users, error: usersError } = await supabase
+      const { data: users } = await supabase
         .from('profiles')
         .select('id, username, total_score, songs_performed, avatar_url')
         .order('total_score', { ascending: false })
         .limit(10);
 
-      if (!usersError && users) {
-        setTopUsers(users);
-      }
+      if (users) setTopUsers(users);
 
-      // Fetch top individual scores
-      const { data: scores, error: scoresError } = await supabase
+      const { data: scores } = await supabase
         .from('scores')
         .select(`
-          id,
-          score,
-          rating,
-          song_title,
-          song_artist,
-          thumbnail_url,
+          id, score, rating, song_title, song_artist, thumbnail_url,
           profiles!scores_user_id_fkey (username)
         `)
         .order('score', { ascending: false })
         .limit(10);
 
-      if (!scoresError && scores) {
-        setTopScores(scores as unknown as TopScore[]);
-      }
-
+      if (scores) setTopScores(scores as unknown as TopScore[]);
       setLoading(false);
     };
 
     fetchLeaderboard();
 
-    // Subscribe to realtime updates
     const channel = supabase
       .channel('leaderboard-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => {
-        fetchLeaderboard();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'scores' }, () => {
-        fetchLeaderboard();
-      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, fetchLeaderboard)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'scores' }, fetchLeaderboard)
       .subscribe();
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => { supabase.removeChannel(channel); };
   }, []);
 
   const getRankIcon = (index: number) => {
-    switch (index) {
-      case 0:
-        return <Trophy className="h-6 w-6 text-score-s" />;
-      case 1:
-        return <Medal className="h-6 w-6 text-muted-foreground" />;
-      case 2:
-        return <Award className="h-6 w-6 text-score-c" />;
-      default:
-        return <span className="font-display text-lg font-bold text-muted-foreground">{index + 1}</span>;
-    }
+    if (index === 0) return <Trophy className="h-6 w-6 text-score-perfect" />;
+    if (index === 1) return <Medal className="h-6 w-6 text-muted-foreground" />;
+    if (index === 2) return <Award className="h-6 w-6 text-score-ok" />;
+    return <span className="text-lg font-bold text-muted-foreground">{index + 1}</span>;
+  };
+
+  const getRatingColor = (rating: string) => {
+    const colors: Record<string, string> = {
+      'S': 'text-score-perfect',
+      'A': 'text-score-great',
+      'B': 'text-score-good',
+      'C': 'text-score-ok',
+      'D': 'text-score-ok',
+      'F': 'text-score-miss',
+    };
+    return colors[rating] || 'text-foreground';
   };
 
   return (
-    <Layout>
-      <div className="space-y-8">
-        <div className="text-center">
-          <h1 className="font-display text-3xl font-bold mb-2">Leaderboard</h1>
-          <p className="text-muted-foreground">Top performers from around the world</p>
+    <div className="min-h-screen bg-background">
+      {/* Header */}
+      <header className="glass border-b border-border p-4 sticky top-0 z-50">
+        <div className="max-w-6xl mx-auto flex items-center gap-4">
+          <Link to="/">
+            <Button variant="ghost" size="icon">
+              <ArrowLeft className="w-5 h-5" />
+            </Button>
+          </Link>
+          <div>
+            <h1 className="font-semibold text-xl">Leaderboard</h1>
+            <p className="text-sm text-muted-foreground">Top performers worldwide</p>
+          </div>
         </div>
+      </header>
 
+      <main className="max-w-6xl mx-auto p-4 md:p-8">
         <div className="grid gap-6 lg:grid-cols-2">
           {/* Top Users */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Trophy className="h-5 w-5 text-score-s" />
-                Top Performers
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
+          <div className="bg-card border border-border rounded-xl p-6">
+            <div className="flex items-center gap-2 mb-6">
+              <Trophy className="h-5 w-5 text-score-perfect" />
+              <h2 className="font-semibold text-lg">Top Performers</h2>
+            </div>
+            
+            <div className="space-y-3">
               {loading ? (
                 Array(5).fill(0).map((_, i) => (
-                  <div key={i} className="flex items-center gap-4">
-                    <Skeleton className="h-6 w-6" />
-                    <Skeleton className="h-10 w-10 rounded-full" />
-                    <div className="flex-1">
-                      <Skeleton className="h-4 w-24 mb-1" />
-                      <Skeleton className="h-3 w-16" />
-                    </div>
-                    <Skeleton className="h-6 w-16" />
-                  </div>
+                  <div key={i} className="animate-shimmer h-16 rounded-lg" />
                 ))
               ) : topUsers.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
+                <div className="text-center py-12 text-muted-foreground">
                   <Music className="h-12 w-12 mx-auto mb-4 opacity-30" />
                   <p>No scores yet. Be the first!</p>
                 </div>
@@ -140,55 +125,40 @@ export default function Leaderboard() {
                   <div
                     key={user.id}
                     className={`flex items-center gap-4 p-3 rounded-xl transition-colors ${
-                      index < 3 ? 'bg-muted/50' : ''
+                      index < 3 ? 'bg-muted/50' : 'hover:bg-muted/30'
                     }`}
                   >
-                    <div className="w-8 flex justify-center">
-                      {getRankIcon(index)}
+                    <div className="w-8 flex justify-center">{getRankIcon(index)}</div>
+                    <div className={`h-10 w-10 rounded-full flex items-center justify-center ${
+                      index === 0 ? 'gradient-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
+                    }`}>
+                      {user.username.charAt(0).toUpperCase()}
                     </div>
-                    <Avatar className="h-10 w-10">
-                      <AvatarFallback className={index === 0 ? 'gradient-primary text-primary-foreground' : ''}>
-                        {user.username.charAt(0).toUpperCase()}
-                      </AvatarFallback>
-                    </Avatar>
                     <div className="flex-1">
                       <div className="font-medium">{user.username}</div>
-                      <div className="text-sm text-muted-foreground">
-                        {user.songs_performed} songs
-                      </div>
+                      <div className="text-sm text-muted-foreground">{user.songs_performed} songs</div>
                     </div>
-                    <div className="font-display text-lg font-bold">
-                      {user.total_score.toLocaleString()}
-                    </div>
+                    <div className="text-lg font-bold">{user.total_score.toLocaleString()}</div>
                   </div>
                 ))
               )}
-            </CardContent>
-          </Card>
+            </div>
+          </div>
 
           {/* Top Scores */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Music className="h-5 w-5 text-primary" />
-                Top Scores
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
+          <div className="bg-card border border-border rounded-xl p-6">
+            <div className="flex items-center gap-2 mb-6">
+              <Music className="h-5 w-5 text-primary" />
+              <h2 className="font-semibold text-lg">Top Scores</h2>
+            </div>
+            
+            <div className="space-y-3">
               {loading ? (
                 Array(5).fill(0).map((_, i) => (
-                  <div key={i} className="flex items-center gap-4">
-                    <Skeleton className="h-6 w-6" />
-                    <Skeleton className="h-12 w-12 rounded-lg" />
-                    <div className="flex-1">
-                      <Skeleton className="h-4 w-32 mb-1" />
-                      <Skeleton className="h-3 w-20" />
-                    </div>
-                    <Skeleton className="h-8 w-16" />
-                  </div>
+                  <div key={i} className="animate-shimmer h-16 rounded-lg" />
                 ))
               ) : topScores.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
+                <div className="text-center py-12 text-muted-foreground">
                   <Music className="h-12 w-12 mx-auto mb-4 opacity-30" />
                   <p>No scores yet. Be the first!</p>
                 </div>
@@ -197,33 +167,32 @@ export default function Leaderboard() {
                   <div
                     key={score.id}
                     className={`flex items-center gap-4 p-3 rounded-xl transition-colors ${
-                      index < 3 ? 'bg-muted/50' : ''
+                      index < 3 ? 'bg-muted/50' : 'hover:bg-muted/30'
                     }`}
                   >
-                    <div className="w-8 flex justify-center">
-                      {getRankIcon(index)}
-                    </div>
-                    {score.thumbnail_url && (
-                      <img
-                        src={score.thumbnail_url}
-                        alt={score.song_title}
-                        className="h-12 w-12 rounded-lg object-cover"
-                      />
+                    <div className="w-8 flex justify-center">{getRankIcon(index)}</div>
+                    {score.thumbnail_url ? (
+                      <img src={score.thumbnail_url} alt={score.song_title} className="h-12 w-12 rounded-lg object-cover" />
+                    ) : (
+                      <div className="h-12 w-12 rounded-lg bg-muted flex items-center justify-center">
+                        <Music className="h-5 w-5 text-muted-foreground" />
+                      </div>
                     )}
                     <div className="flex-1 min-w-0">
                       <div className="font-medium truncate">{score.song_title}</div>
-                      <div className="text-sm text-muted-foreground">
-                        by {score.profiles?.username || 'Anonymous'}
-                      </div>
+                      <div className="text-sm text-muted-foreground">by {score.profiles?.username || 'Anonymous'}</div>
                     </div>
-                    <ScoreDisplay score={score.score} rating={score.rating} size="sm" />
+                    <div className="text-right">
+                      <span className={`text-xl font-bold ${getRatingColor(score.rating)}`}>{score.rating}</span>
+                      <div className="text-sm text-muted-foreground">{score.score}</div>
+                    </div>
                   </div>
                 ))
               )}
-            </CardContent>
-          </Card>
+            </div>
+          </div>
         </div>
-      </div>
-    </Layout>
+      </main>
+    </div>
   );
 }
