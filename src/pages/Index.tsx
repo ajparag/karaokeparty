@@ -1,8 +1,75 @@
-import { Link } from "react-router-dom";
+import { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Mic, Music, Trophy, Sparkles } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Mic, Music, Trophy, Sparkles, Loader2, Play } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
+import { useToast } from "@/hooks/use-toast";
+
+interface Track {
+  id: string;
+  title: string;
+  artist: string;
+  thumbnail: string;
+  duration: string;
+  source: 'saavn';
+  audioUrl: string;
+  album?: string;
+}
 
 const Index = () => {
+  const [query, setQuery] = useState("");
+  const [tracks, setTracks] = useState<Track[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
+  const navigate = useNavigate();
+  const { toast } = useToast();
+
+  const handleSearch = async () => {
+    if (!query.trim()) return;
+    
+    setIsLoading(true);
+    setHasSearched(true);
+    
+    try {
+      const { data, error } = await supabase.functions.invoke('search-music', {
+        body: { query: query.trim() }
+      });
+      
+      if (error) throw error;
+      
+      setTracks(data?.tracks || []);
+      
+      if (data?.tracks?.length === 0) {
+        toast({
+          title: "No tracks found",
+          description: "Try a different search term",
+        });
+      }
+    } catch (error) {
+      console.error('Search error:', error);
+      toast({
+        title: "Search failed",
+        description: "Please try again later",
+        variant: "destructive",
+      });
+      setTracks([]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      handleSearch();
+    }
+  };
+
+  const handleSelectTrack = (track: Track) => {
+    sessionStorage.setItem('selectedTrack', JSON.stringify(track));
+    navigate(`/sing/${track.id}`);
+  };
+
   return (
     <div className="min-h-screen bg-background flex flex-col">
       {/* Hero Section */}
@@ -14,7 +81,7 @@ const Index = () => {
         </div>
         
         {/* Content */}
-        <div className="relative z-10 text-center max-w-4xl mx-auto">
+        <div className="relative z-10 text-center max-w-4xl mx-auto w-full">
           {/* Logo/Title */}
           <div className="mb-8 flex items-center justify-center gap-3">
             <div className="p-4 rounded-2xl gradient-primary shadow-glow">
@@ -31,28 +98,142 @@ const Index = () => {
             Sing Bollywood, Tollywood & More
           </p>
           
-          <p className="text-muted-foreground mb-12 max-w-2xl mx-auto">
+          <p className="text-muted-foreground mb-8 max-w-2xl mx-auto">
             Your ultimate Indian karaoke experience. Search instrumental tracks, 
             follow synced lyrics, and get scored on your vocal performance.
           </p>
           
-          {/* Language badges */}
-          <div className="flex flex-wrap justify-center gap-2 mb-12">
-            {['Hindi', 'Marathi', 'Gujarati', 'Punjabi', 'Tamil', 'Telugu', 'Malayalam'].map((lang) => (
-              <span key={lang} className="language-badge text-muted-foreground">
-                {lang}
-              </span>
-            ))}
+          {/* Search Section */}
+          <div className="max-w-xl mx-auto mb-8">
+            <div className="flex gap-2">
+              <Input
+                type="text"
+                placeholder="Search for songs... (e.g., 'Tum Hi Ho', 'Kesariya')"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyPress={handleKeyPress}
+                className="flex-1 bg-muted border-border h-12 text-base"
+              />
+              <Button
+                onClick={handleSearch}
+                disabled={isLoading || !query.trim()}
+                size="lg"
+                className="gradient-primary text-primary-foreground shadow-glow hover:opacity-90 transition-opacity px-6"
+              >
+                {isLoading ? (
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                ) : (
+                  <>
+                    <Music className="w-5 h-5 mr-2" />
+                    Start Singing
+                  </>
+                )}
+              </Button>
+            </div>
+            
+            {/* Popular searches */}
+            <div className="mt-4">
+              <p className="text-sm text-muted-foreground mb-2">Popular:</p>
+              <div className="flex flex-wrap justify-center gap-2">
+                {['Tum Hi Ho', 'Kal Ho Naa Ho', 'Chaiyya Chaiyya', 'Kesariya', 'Mere Sapno Ki Rani'].map((term) => (
+                  <Button
+                    key={term}
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setQuery(term);
+                      setTimeout(() => handleSearch(), 100);
+                    }}
+                    className="border-border hover:bg-muted text-xs"
+                  >
+                    {term}
+                  </Button>
+                ))}
+              </div>
+            </div>
           </div>
           
-          {/* CTA Buttons */}
-          <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Link to="/search">
-              <Button size="lg" className="gradient-primary text-primary-foreground shadow-glow hover:opacity-90 transition-opacity px-8 py-6 text-lg">
-                <Music className="w-5 h-5 mr-2" />
-                Start Singing
-              </Button>
-            </Link>
+          {/* Search Results */}
+          {hasSearched && (
+            <div className="max-w-2xl mx-auto text-left mb-8">
+              {isLoading ? (
+                <div className="py-8 text-center">
+                  <Loader2 className="w-8 h-8 animate-spin text-primary mx-auto mb-3" />
+                  <p className="text-muted-foreground">Searching JioSaavn...</p>
+                </div>
+              ) : tracks.length === 0 ? (
+                <div className="text-center py-8">
+                  <p className="text-muted-foreground">No results found. Try different keywords.</p>
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-80 overflow-y-auto pr-2">
+                  <p className="text-muted-foreground text-sm mb-3">
+                    Found {tracks.length} track{tracks.length !== 1 ? 's' : ''}
+                  </p>
+                  
+                  {tracks.map((track) => (
+                    <div
+                      key={track.id}
+                      className="group p-3 rounded-xl bg-card border border-border hover:border-primary/50 transition-all cursor-pointer"
+                      onClick={() => handleSelectTrack(track)}
+                    >
+                      <div className="flex items-center gap-3">
+                        {/* Thumbnail */}
+                        <div className="relative w-12 h-12 rounded-lg overflow-hidden bg-muted shrink-0">
+                          {track.thumbnail ? (
+                            <img
+                              src={track.thumbnail}
+                              alt={track.title}
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center">
+                              <Music className="w-5 h-5 text-muted-foreground" />
+                            </div>
+                          )}
+                          <div className="absolute inset-0 bg-background/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                            <Play className="w-5 h-5 text-primary fill-primary" />
+                          </div>
+                        </div>
+                        
+                        {/* Info */}
+                        <div className="flex-1 min-w-0">
+                          <h3 className="font-semibold text-sm truncate group-hover:text-primary transition-colors">
+                            {track.title}
+                          </h3>
+                          <p className="text-xs text-muted-foreground truncate">
+                            {track.artist} • {track.duration}
+                          </p>
+                        </div>
+                        
+                        {/* Action */}
+                        <Button
+                          size="sm"
+                          className="gradient-primary text-primary-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0 text-xs"
+                        >
+                          Sing
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          
+          {/* Language badges */}
+          {!hasSearched && (
+            <div className="flex flex-wrap justify-center gap-2 mb-8">
+              {['Hindi', 'Marathi', 'Gujarati', 'Punjabi', 'Tamil', 'Telugu', 'Malayalam'].map((lang) => (
+                <span key={lang} className="language-badge text-muted-foreground">
+                  {lang}
+                </span>
+              ))}
+            </div>
+          )}
+          
+          {/* Secondary CTA */}
+          <div className="flex justify-center">
             <Link to="/leaderboard">
               <Button size="lg" variant="outline" className="px-8 py-6 text-lg border-border hover:bg-muted">
                 <Trophy className="w-5 h-5 mr-2" />
