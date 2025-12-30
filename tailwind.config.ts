@@ -14,8 +14,9 @@ export default {
     },
     extend: {
       fontFamily: {
-        sans: ['Inter', 'sans-serif'],
-        display: ['Space Grotesk', 'sans-serif'],
+        sans: ['Poppins', 'Noto Sans Devanagari', 'sans-serif'],
+        display: ['Poppins', 'sans-serif'],
+        hindi: ['Noto Sans Devanagari', 'sans-serif'],
       },
       colors: {
         border: "hsl(var(--border))",
@@ -51,28 +52,18 @@ export default {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
-        sidebar: {
-          DEFAULT: "hsl(var(--sidebar-background))",
-          foreground: "hsl(var(--sidebar-foreground))",
-          primary: "hsl(var(--sidebar-primary))",
-          "primary-foreground": "hsl(var(--sidebar-primary-foreground))",
-          accent: "hsl(var(--sidebar-accent))",
-          "accent-foreground": "hsl(var(--sidebar-accent-foreground))",
-          border: "hsl(var(--sidebar-border))",
-          ring: "hsl(var(--sidebar-ring))",
-        },
         score: {
-          s: "hsl(var(--score-s))",
-          a: "hsl(var(--score-a))",
-          b: "hsl(var(--score-b))",
-          c: "hsl(var(--score-c))",
-          d: "hsl(var(--score-d))",
-          f: "hsl(var(--score-f))",
+          perfect: "hsl(var(--score-perfect))",
+          great: "hsl(var(--score-great))",
+          good: "hsl(var(--score-good))",
+          ok: "hsl(var(--score-ok))",
+          miss: "hsl(var(--score-miss))",
         },
-        visualizer: {
-          primary: "hsl(var(--visualizer-primary))",
-          secondary: "hsl(var(--visualizer-secondary))",
-          accent: "hsl(var(--visualizer-accent))",
+        bar: {
+          background: "hsl(var(--bar-background))",
+          progress: "hsl(var(--bar-progress))",
+          perfect: "hsl(var(--bar-perfect))",
+          performance: "hsl(var(--bar-performance))",
         },
       },
       borderRadius: {
@@ -97,9 +88,9 @@ export default {
           from: { opacity: "0", transform: "scale(0.95)" },
           to: { opacity: "1", transform: "scale(1)" },
         },
-        "slide-in-right": {
-          from: { opacity: "0", transform: "translateX(20px)" },
-          to: { opacity: "1", transform: "translateX(0)" },
+        "slide-up": {
+          from: { opacity: "0", transform: "translateY(20px)" },
+          to: { opacity: "1", transform: "translateY(0)" },
         },
       },
       animation: {
@@ -107,7 +98,7 @@ export default {
         "accordion-up": "accordion-up 0.2s ease-out",
         "fade-in": "fade-in 0.3s ease-out",
         "scale-in": "scale-in 0.2s ease-out",
-        "slide-in-right": "slide-in-right 0.3s ease-out",
+        "slide-up": "slide-up 0.4s ease-out",
       },
     },
   },
