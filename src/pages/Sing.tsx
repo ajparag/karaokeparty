@@ -1,7 +1,18 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Play, Pause, Mic, MicOff, RotateCcw, Save, Volume2, VolumeX } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { ArrowLeft, Play, Pause, Mic, MicOff, RotateCcw, Save, Volume2, VolumeX, Edit2, Search } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useVocalAnalysis } from "@/hooks/useVocalAnalysis";
@@ -49,6 +60,12 @@ const Sing = () => {
   const [isPlayerReady, setIsPlayerReady] = useState(false);
   const [volume, setVolume] = useState(80);
   const [isMuted, setIsMuted] = useState(false);
+  
+  // Lyrics search dialog state
+  const [lyricsDialogOpen, setLyricsDialogOpen] = useState(false);
+  const [lyricsSearchTitle, setLyricsSearchTitle] = useState("");
+  const [lyricsSearchArtist, setLyricsSearchArtist] = useState("");
+  const [isSearchingLyrics, setIsSearchingLyrics] = useState(false);
   
   const playerRef = useRef<any>(null);
   const playerContainerRef = useRef<HTMLDivElement>(null);
@@ -174,15 +191,57 @@ const Sing = () => {
 
   const fetchLyrics = async (title: string, artist: string) => {
     try {
+      setLyrics([]);
       const { data } = await supabase.functions.invoke('fetch-lyrics', {
         body: { title, artist }
       });
-      if (data?.lyrics) {
+      if (data?.lyrics && data.lyrics.length > 0) {
         setLyrics(data.lyrics);
+        toast({ title: "Lyrics loaded!", description: `Found synced lyrics for "${title}"` });
+      } else {
+        toast({ 
+          title: "No lyrics found", 
+          description: "Try editing the title to search again",
+          variant: "destructive"
+        });
       }
     } catch (error) {
       console.error('Failed to fetch lyrics:', error);
+      toast({ 
+        title: "Failed to fetch lyrics", 
+        description: "Try editing the title to search again",
+        variant: "destructive"
+      });
     }
+  };
+
+  const handleLyricsSearch = async () => {
+    if (!lyricsSearchTitle.trim()) {
+      toast({ title: "Please enter a song title", variant: "destructive" });
+      return;
+    }
+    
+    setIsSearchingLyrics(true);
+    await fetchLyrics(lyricsSearchTitle.trim(), lyricsSearchArtist.trim());
+    setIsSearchingLyrics(false);
+    setLyricsDialogOpen(false);
+  };
+
+  const openLyricsDialog = () => {
+    // Pre-fill with current track info, cleaned up
+    const cleanTitle = track?.title
+      ?.replace(/\(.*?\)/g, '') // Remove parentheses content
+      ?.replace(/\[.*?\]/g, '') // Remove bracket content
+      ?.replace(/karaoke|instrumental|lyrics|official|video|audio|hd|4k/gi, '')
+      ?.trim() || '';
+    const cleanArtist = track?.artist
+      ?.replace(/- Topic$/i, '')
+      ?.replace(/VEVO$/i, '')
+      ?.trim() || '';
+    
+    setLyricsSearchTitle(cleanTitle);
+    setLyricsSearchArtist(cleanArtist);
+    setLyricsDialogOpen(true);
   };
 
   // Update current line based on time
@@ -320,6 +379,65 @@ const Sing = () => {
           <h1 className="font-semibold truncate">{track?.title || 'Loading...'}</h1>
           <p className="text-sm text-muted-foreground truncate">{track?.artist}</p>
         </div>
+        
+        {/* Edit Lyrics Search Button */}
+        <Dialog open={lyricsDialogOpen} onOpenChange={setLyricsDialogOpen}>
+          <DialogTrigger asChild>
+            <Button variant="outline" size="sm" onClick={openLyricsDialog} className="shrink-0">
+              <Edit2 className="w-4 h-4 mr-2" />
+              <span className="hidden sm:inline">Edit Lyrics</span>
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="sm:max-w-md bg-card">
+            <DialogHeader>
+              <DialogTitle>Search Lyrics</DialogTitle>
+              <DialogDescription>
+                Edit the song title and artist to search for synced lyrics from LRCLIB.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="lyrics-title">Song Title</Label>
+                <Input
+                  id="lyrics-title"
+                  placeholder="e.g., Tum Hi Ho"
+                  value={lyricsSearchTitle}
+                  onChange={(e) => setLyricsSearchTitle(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleLyricsSearch()}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="lyrics-artist">Artist (optional)</Label>
+                <Input
+                  id="lyrics-artist"
+                  placeholder="e.g., Arijit Singh"
+                  value={lyricsSearchArtist}
+                  onChange={(e) => setLyricsSearchArtist(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleLyricsSearch()}
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setLyricsDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button 
+                onClick={handleLyricsSearch} 
+                disabled={isSearchingLyrics || !lyricsSearchTitle.trim()}
+                className="gradient-primary text-primary-foreground"
+              >
+                {isSearchingLyrics ? (
+                  <>Searching...</>
+                ) : (
+                  <>
+                    <Search className="w-4 h-4 mr-2" />
+                    Search Lyrics
+                  </>
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
         
         {/* Volume Control */}
         <div className="hidden sm:flex items-center gap-2">
