@@ -25,21 +25,15 @@ interface Track {
   artist: string;
   thumbnail: string;
   duration: string;
-  source: 'youtube';
-  videoId: string;
+  source: 'saavn';
+  audioUrl: string;
+  album?: string;
 }
 
 interface LyricLine {
   time: number;
   text: string;
   duration?: number;
-}
-
-declare global {
-  interface Window {
-    YT: any;
-    onYouTubeIframeAPIReady: () => void;
-  }
 }
 
 const Sing = () => {
@@ -67,9 +61,7 @@ const Sing = () => {
   const [lyricsSearchArtist, setLyricsSearchArtist] = useState("");
   const [isSearchingLyrics, setIsSearchingLyrics] = useState(false);
   
-  const playerRef = useRef<any>(null);
-  const playerContainerRef = useRef<HTMLDivElement>(null);
-  const timeUpdateIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const scoreAccumulatorRef = useRef({ pitch: 0, rhythm: 0, diction: 0, count: 0 });
 
   const { 
@@ -107,87 +99,64 @@ const Sing = () => {
     }
   }, [trackId, navigate]);
 
-  // Initialize YouTube Player
+  // Initialize HTML5 Audio Player
   useEffect(() => {
-    if (!track?.videoId || !playerContainerRef.current) return;
+    if (!track?.audioUrl) return;
 
-    const initPlayer = () => {
-      if (playerContainerRef.current && window.YT && window.YT.Player) {
-        playerRef.current = new window.YT.Player(playerContainerRef.current, {
-          videoId: track.videoId,
-          height: '1',
-          width: '1',
-          playerVars: {
-            autoplay: 0,
-            controls: 0,
-            modestbranding: 1,
-            rel: 0,
-            showinfo: 0,
-            fs: 0,
-            playsinline: 1,
-          },
-          events: {
-            onReady: (event: any) => {
-              setIsPlayerReady(true);
-              setDuration(event.target.getDuration());
-              event.target.setVolume(volume);
-            },
-            onStateChange: (event: any) => {
-              if (event.data === window.YT.PlayerState.PLAYING) {
-                setIsPlaying(true);
-              } else if (event.data === window.YT.PlayerState.PAUSED) {
-                setIsPlaying(false);
-              } else if (event.data === window.YT.PlayerState.ENDED) {
-                setIsPlaying(false);
-                setShowResults(true);
-              }
-            },
-          },
-        });
-      }
-    };
+    const audio = new Audio(track.audioUrl);
+    audioRef.current = audio;
+    
+    audio.volume = volume / 100;
+    audio.muted = isMuted;
+    
+    audio.addEventListener('loadedmetadata', () => {
+      setDuration(audio.duration);
+      setIsPlayerReady(true);
+    });
+    
+    audio.addEventListener('timeupdate', () => {
+      setCurrentTime(audio.currentTime);
+    });
+    
+    audio.addEventListener('play', () => {
+      setIsPlaying(true);
+    });
+    
+    audio.addEventListener('pause', () => {
+      setIsPlaying(false);
+    });
+    
+    audio.addEventListener('ended', () => {
+      setIsPlaying(false);
+      setShowResults(true);
+    });
+    
+    audio.addEventListener('error', (e) => {
+      console.error('Audio error:', e);
+      toast({
+        title: "Audio playback error",
+        description: "Failed to load audio. Please try another song.",
+        variant: "destructive",
+      });
+    });
 
-    if (!window.YT) {
-      const tag = document.createElement('script');
-      tag.src = 'https://www.youtube.com/iframe_api';
-      const firstScriptTag = document.getElementsByTagName('script')[0];
-      firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag);
-      window.onYouTubeIframeAPIReady = initPlayer;
-    } else if (window.YT.Player) {
-      initPlayer();
-    } else {
-      window.onYouTubeIframeAPIReady = initPlayer;
-    }
+    // Preload the audio
+    audio.load();
 
     return () => {
-      if (playerRef.current?.destroy) {
-        playerRef.current.destroy();
-      }
-      playerRef.current = null;
+      audio.pause();
+      audio.src = '';
+      audioRef.current = null;
     };
-  }, [track?.videoId]);
+  }, [track?.audioUrl]);
 
-  // Time update interval
+  // Update volume/mute when changed
   useEffect(() => {
-    if (isPlaying && playerRef.current) {
-      timeUpdateIntervalRef.current = setInterval(() => {
-        if (playerRef.current?.getCurrentTime) {
-          const time = playerRef.current.getCurrentTime();
-          setCurrentTime(time);
-        }
-      }, 100);
-    } else {
-      if (timeUpdateIntervalRef.current) {
-        clearInterval(timeUpdateIntervalRef.current);
-        timeUpdateIntervalRef.current = null;
-      }
+    if (audioRef.current) {
+      audioRef.current.volume = isMuted ? 0 : volume / 100;
+      audioRef.current.muted = isMuted;
     }
-    return () => {
-      if (timeUpdateIntervalRef.current) {
-        clearInterval(timeUpdateIntervalRef.current);
-      }
-    };
-  }, [isPlaying]);
+  }, [volume, isMuted]);
 
   const fetchLyrics = async (title: string, artist: string) => {
     try {
@@ -256,12 +225,12 @@ const Sing = () => {
   }, [currentTime, lyrics]);
 
   const togglePlay = useCallback(() => {
-    if (!playerRef.current || !isPlayerReady) return;
+    if (!audioRef.current || !isPlayerReady) return;
     
     if (isPlaying) {
-      playerRef.current.pauseVideo();
+      audioRef.current.pause();
     } else {
-      playerRef.current.playVideo();
+      audioRef.current.play();
     }
   }, [isPlaying, isPlayerReady]);
 
@@ -276,22 +245,11 @@ const Sing = () => {
   const handleVolumeChange = useCallback((value: number[]) => {
     const newVolume = value[0];
     setVolume(newVolume);
-    if (playerRef.current && !isMuted) {
-      playerRef.current.setVolume(newVolume);
-    }
-  }, [isMuted]);
+  }, []);
 
   const toggleMute = useCallback(() => {
-    if (!playerRef.current) return;
-    
-    if (isMuted) {
-      playerRef.current.unMute();
-      playerRef.current.setVolume(volume);
-    } else {
-      playerRef.current.mute();
-    }
     setIsMuted(!isMuted);
-  }, [isMuted, volume]);
+  }, [isMuted]);
 
   const handleRestart = useCallback(() => {
     setCurrentTime(0);
@@ -299,8 +257,8 @@ const Sing = () => {
     scoreAccumulatorRef.current = { pitch: 0, rhythm: 0, diction: 0, count: 0 };
     resetScores();
     setShowResults(false);
-    if (playerRef.current) {
-      playerRef.current.seekTo(0);
+    if (audioRef.current) {
+      audioRef.current.currentTime = 0;
     }
   }, [resetScores]);
 
@@ -324,7 +282,7 @@ const Sing = () => {
         user_id: user.id,
         song_title: track.title,
         song_artist: track.artist,
-        youtube_video_id: track.videoId,
+        youtube_video_id: track.id, // Using track id as identifier
         score: totalScore,
         rating,
         timing_accuracy: Math.round(avgPitch),
@@ -365,11 +323,6 @@ const Sing = () => {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
-      {/* Hidden YouTube Player (audio only) */}
-      <div className="sr-only" aria-hidden="true">
-        <div ref={playerContainerRef} />
-      </div>
-
       {/* Header */}
       <header className="glass border-b border-border p-4 flex items-center gap-4 shrink-0">
         <Button variant="ghost" size="icon" onClick={() => navigate('/search')}>
@@ -518,7 +471,7 @@ const Sing = () => {
             <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mx-auto mb-4 animate-pulse">
               <Play className="w-8 h-8 text-muted-foreground" />
             </div>
-            <p className="text-muted-foreground">Loading YouTube player...</p>
+            <p className="text-muted-foreground">Loading audio...</p>
           </div>
         ) : (
           <div className="w-full max-w-4xl space-y-3">
