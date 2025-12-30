@@ -1,26 +1,34 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Play, Pause, Mic, MicOff, RotateCcw, Save } from "lucide-react";
+import { ArrowLeft, Play, Pause, Mic, MicOff, RotateCcw, Save, Volume2, VolumeX } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useVocalAnalysis } from "@/hooks/useVocalAnalysis";
 import { useAuth } from "@/hooks/useAuth";
+import { Slider } from "@/components/ui/slider";
 
 interface Track {
   id: string;
   title: string;
   artist: string;
   thumbnail: string;
-  duration: number;
-  language?: string;
-  streamUrl?: string;
+  duration: string;
+  source: 'youtube';
+  videoId: string;
 }
 
 interface LyricLine {
   time: number;
   text: string;
   duration?: number;
+}
+
+declare global {
+  interface Window {
+    YT: any;
+    onYouTubeIframeAPIReady: () => void;
+  }
 }
 
 const Sing = () => {
@@ -38,8 +46,13 @@ const Sing = () => {
   const [totalScore, setTotalScore] = useState(0);
   const [showResults, setShowResults] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isPlayerReady, setIsPlayerReady] = useState(false);
+  const [volume, setVolume] = useState(80);
+  const [isMuted, setIsMuted] = useState(false);
   
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const playerRef = useRef<any>(null);
+  const playerContainerRef = useRef<HTMLDivElement>(null);
+  const timeUpdateIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const scoreAccumulatorRef = useRef({ pitch: 0, rhythm: 0, diction: 0, count: 0 });
 
   const { 
@@ -56,7 +69,6 @@ const Sing = () => {
         scoreAccumulatorRef.current.diction += m.diction;
         scoreAccumulatorRef.current.count += 1;
         
-        // Calculate running total score (0-1000 scale)
         const avgPitch = scoreAccumulatorRef.current.pitch / scoreAccumulatorRef.current.count;
         const avgRhythm = scoreAccumulatorRef.current.rhythm / scoreAccumulatorRef.current.count;
         const avgDiction = scoreAccumulatorRef.current.diction / scoreAccumulatorRef.current.count;
@@ -72,16 +84,98 @@ const Sing = () => {
     if (stored) {
       const parsed = JSON.parse(stored);
       setTrack(parsed);
-      fetchLyrics(parsed.title, parsed.artist, parsed.duration);
+      fetchLyrics(parsed.title, parsed.artist);
     } else {
       navigate('/search');
     }
   }, [trackId, navigate]);
 
-  const fetchLyrics = async (title: string, artist: string, trackDuration: number) => {
+  // Initialize YouTube Player
+  useEffect(() => {
+    if (!track?.videoId || !playerContainerRef.current) return;
+
+    const initPlayer = () => {
+      if (playerContainerRef.current && window.YT && window.YT.Player) {
+        playerRef.current = new window.YT.Player(playerContainerRef.current, {
+          videoId: track.videoId,
+          height: '1',
+          width: '1',
+          playerVars: {
+            autoplay: 0,
+            controls: 0,
+            modestbranding: 1,
+            rel: 0,
+            showinfo: 0,
+            fs: 0,
+            playsinline: 1,
+          },
+          events: {
+            onReady: (event: any) => {
+              setIsPlayerReady(true);
+              setDuration(event.target.getDuration());
+              event.target.setVolume(volume);
+            },
+            onStateChange: (event: any) => {
+              if (event.data === window.YT.PlayerState.PLAYING) {
+                setIsPlaying(true);
+              } else if (event.data === window.YT.PlayerState.PAUSED) {
+                setIsPlaying(false);
+              } else if (event.data === window.YT.PlayerState.ENDED) {
+                setIsPlaying(false);
+                setShowResults(true);
+              }
+            },
+          },
+        });
+      }
+    };
+
+    if (!window.YT) {
+      const tag = document.createElement('script');
+      tag.src = 'https://www.youtube.com/iframe_api';
+      const firstScriptTag = document.getElementsByTagName('script')[0];
+      firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag);
+      window.onYouTubeIframeAPIReady = initPlayer;
+    } else if (window.YT.Player) {
+      initPlayer();
+    } else {
+      window.onYouTubeIframeAPIReady = initPlayer;
+    }
+
+    return () => {
+      if (playerRef.current?.destroy) {
+        playerRef.current.destroy();
+      }
+      playerRef.current = null;
+    };
+  }, [track?.videoId]);
+
+  // Time update interval
+  useEffect(() => {
+    if (isPlaying && playerRef.current) {
+      timeUpdateIntervalRef.current = setInterval(() => {
+        if (playerRef.current?.getCurrentTime) {
+          const time = playerRef.current.getCurrentTime();
+          setCurrentTime(time);
+        }
+      }, 100);
+    } else {
+      if (timeUpdateIntervalRef.current) {
+        clearInterval(timeUpdateIntervalRef.current);
+        timeUpdateIntervalRef.current = null;
+      }
+    }
+    return () => {
+      if (timeUpdateIntervalRef.current) {
+        clearInterval(timeUpdateIntervalRef.current);
+      }
+    };
+  }, [isPlaying]);
+
+  const fetchLyrics = async (title: string, artist: string) => {
     try {
       const { data } = await supabase.functions.invoke('fetch-lyrics', {
-        body: { title, artist, duration: trackDuration }
+        body: { title, artist }
       });
       if (data?.lyrics) {
         setLyrics(data.lyrics);
@@ -103,23 +197,14 @@ const Sing = () => {
   }, [currentTime, lyrics]);
 
   const togglePlay = useCallback(() => {
-    if (!audioRef.current) {
-      // If no audio element or stream, simulate playback for demo
-      if (!track?.streamUrl) {
-        setIsPlaying(!isPlaying);
-        return;
-      }
-    }
+    if (!playerRef.current || !isPlayerReady) return;
     
-    if (audioRef.current) {
-      if (isPlaying) {
-        audioRef.current.pause();
-      } else {
-        audioRef.current.play().catch(console.error);
-      }
+    if (isPlaying) {
+      playerRef.current.pauseVideo();
+    } else {
+      playerRef.current.playVideo();
     }
-    setIsPlaying(!isPlaying);
-  }, [isPlaying, track?.streamUrl]);
+  }, [isPlaying, isPlayerReady]);
 
   const toggleMic = useCallback(async () => {
     if (isMicActive) {
@@ -129,22 +214,25 @@ const Sing = () => {
     }
   }, [isMicActive, startAnalysis, stopAnalysis]);
 
-  const handleTimeUpdate = useCallback(() => {
-    if (audioRef.current) {
-      setCurrentTime(audioRef.current.currentTime);
+  const handleVolumeChange = useCallback((value: number[]) => {
+    const newVolume = value[0];
+    setVolume(newVolume);
+    if (playerRef.current && !isMuted) {
+      playerRef.current.setVolume(newVolume);
     }
-  }, []);
+  }, [isMuted]);
 
-  const handleLoadedMetadata = useCallback(() => {
-    if (audioRef.current) {
-      setDuration(audioRef.current.duration);
+  const toggleMute = useCallback(() => {
+    if (!playerRef.current) return;
+    
+    if (isMuted) {
+      playerRef.current.unMute();
+      playerRef.current.setVolume(volume);
+    } else {
+      playerRef.current.mute();
     }
-  }, []);
-
-  const handleEnded = useCallback(() => {
-    setIsPlaying(false);
-    setShowResults(true);
-  }, []);
+    setIsMuted(!isMuted);
+  }, [isMuted, volume]);
 
   const handleRestart = useCallback(() => {
     setCurrentTime(0);
@@ -152,8 +240,8 @@ const Sing = () => {
     scoreAccumulatorRef.current = { pitch: 0, rhythm: 0, diction: 0, count: 0 };
     resetScores();
     setShowResults(false);
-    if (audioRef.current) {
-      audioRef.current.currentTime = 0;
+    if (playerRef.current) {
+      playerRef.current.seekTo(0);
     }
   }, [resetScores]);
 
@@ -177,7 +265,7 @@ const Sing = () => {
         user_id: user.id,
         song_title: track.title,
         song_artist: track.artist,
-        youtube_video_id: track.id,
+        youtube_video_id: track.videoId,
         score: totalScore,
         rating,
         timing_accuracy: Math.round(avgPitch),
@@ -197,24 +285,6 @@ const Sing = () => {
       setIsSaving(false);
     }
   };
-
-  // Simulate time progression when no audio
-  useEffect(() => {
-    if (!isPlaying || track?.streamUrl) return;
-    
-    const interval = setInterval(() => {
-      setCurrentTime(prev => {
-        const next = prev + 0.1;
-        if (next >= (track?.duration || 180)) {
-          handleEnded();
-          return prev;
-        }
-        return next;
-      });
-    }, 100);
-
-    return () => clearInterval(interval);
-  }, [isPlaying, track?.streamUrl, track?.duration, handleEnded]);
 
   const getScoreColor = (value: number) => {
     if (value >= 80) return 'bg-score-perfect';
@@ -236,6 +306,11 @@ const Sing = () => {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
+      {/* Hidden YouTube Player (audio only) */}
+      <div className="sr-only" aria-hidden="true">
+        <div ref={playerContainerRef} />
+      </div>
+
       {/* Header */}
       <header className="glass border-b border-border p-4 flex items-center gap-4 shrink-0">
         <Button variant="ghost" size="icon" onClick={() => navigate('/search')}>
@@ -245,11 +320,20 @@ const Sing = () => {
           <h1 className="font-semibold truncate">{track?.title || 'Loading...'}</h1>
           <p className="text-sm text-muted-foreground truncate">{track?.artist}</p>
         </div>
-        {track?.language && (
-          <span className="language-badge text-muted-foreground shrink-0">
-            {track.language}
-          </span>
-        )}
+        
+        {/* Volume Control */}
+        <div className="hidden sm:flex items-center gap-2">
+          <Button variant="ghost" size="icon" onClick={toggleMute}>
+            {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+          </Button>
+          <Slider
+            value={[isMuted ? 0 : volume]}
+            onValueChange={handleVolumeChange}
+            max={100}
+            step={1}
+            className="w-24"
+          />
+        </div>
       </header>
 
       {/* Results Overlay */}
@@ -311,62 +395,67 @@ const Sing = () => {
 
       {/* Lyrics Display */}
       <div className="flex-1 flex flex-col items-center justify-center p-4 md:p-8 overflow-hidden">
-        <div className="w-full max-w-4xl space-y-3">
-          {lyrics.length === 0 ? (
-            <div className="text-center py-12">
-              <div className="animate-shimmer h-12 rounded-lg mb-3" />
-              <div className="animate-shimmer h-12 rounded-lg mb-3" />
-              <div className="animate-shimmer h-12 rounded-lg" />
-              <p className="text-muted-foreground mt-4">Loading lyrics...</p>
+        {!isPlayerReady ? (
+          <div className="text-center py-12">
+            <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mx-auto mb-4 animate-pulse">
+              <Play className="w-8 h-8 text-muted-foreground" />
             </div>
-          ) : (
-            lyrics.slice(Math.max(0, currentLineIndex - 1), currentLineIndex + 5).map((line, i) => {
-              const actualIndex = Math.max(0, currentLineIndex - 1) + i;
-              const isCurrent = actualIndex === currentLineIndex;
-              const isPast = actualIndex < currentLineIndex;
-              const progress = isCurrent && line.duration 
-                ? Math.min(100, ((currentTime - line.time) / line.duration) * 100) 
-                : isPast ? 100 : 0;
-              
-              return (
-                <div 
-                  key={`${actualIndex}-${line.time}`} 
-                  className={`singing-bar transition-all duration-300 ${
-                    isCurrent ? 'ring-2 ring-primary scale-[1.02]' : isPast ? 'opacity-40' : 'opacity-60'
-                  }`}
-                >
-                  {/* Progress fill */}
+            <p className="text-muted-foreground">Loading YouTube player...</p>
+          </div>
+        ) : (
+          <div className="w-full max-w-4xl space-y-3">
+            {lyrics.length === 0 ? (
+              <div className="text-center py-12">
+                <div className="animate-shimmer h-12 rounded-lg mb-3" />
+                <div className="animate-shimmer h-12 rounded-lg mb-3" />
+                <div className="animate-shimmer h-12 rounded-lg" />
+                <p className="text-muted-foreground mt-4">Loading lyrics...</p>
+              </div>
+            ) : (
+              lyrics.slice(Math.max(0, currentLineIndex - 1), currentLineIndex + 5).map((line, i) => {
+                const actualIndex = Math.max(0, currentLineIndex - 1) + i;
+                const isCurrent = actualIndex === currentLineIndex;
+                const isPast = actualIndex < currentLineIndex;
+                const progress = isCurrent && line.duration 
+                  ? Math.min(100, ((currentTime - line.time) / line.duration) * 100) 
+                  : isPast ? 100 : 0;
+                
+                return (
                   <div 
-                    className="singing-bar-progress" 
-                    style={{ width: `${progress}%` }} 
-                  />
-                  
-                  {/* Performance overlay - shows mic input level */}
-                  {isCurrent && isMicActive && (
+                    key={`${actualIndex}-${line.time}`} 
+                    className={`singing-bar transition-all duration-300 ${
+                      isCurrent ? 'ring-2 ring-primary scale-[1.02]' : isPast ? 'opacity-40' : 'opacity-60'
+                    }`}
+                  >
                     <div 
-                      className="singing-bar-performance"
-                      style={{ width: `${metrics.volume * 100}%` }}
+                      className="singing-bar-progress" 
+                      style={{ width: `${progress}%` }} 
                     />
-                  )}
-                  
-                  {/* Lyrics text */}
-                  <span className={`relative z-10 text-base md:text-lg transition-colors ${
-                    isCurrent ? 'text-foreground font-medium' : 'text-muted-foreground'
-                  }`}>
-                    {line.text || '♪ ♪ ♪'}
-                  </span>
-                  
-                  {/* Score indicator for current line */}
-                  {isCurrent && isMicActive && metrics.isVoiceDetected && (
-                    <span className="absolute right-4 text-sm font-medium text-score-perfect animate-score-pop">
-                      +{Math.round(metrics.pitchAccuracy / 10)}
+                    
+                    {isCurrent && isMicActive && (
+                      <div 
+                        className="singing-bar-performance"
+                        style={{ width: `${metrics.volume * 100}%` }}
+                      />
+                    )}
+                    
+                    <span className={`relative z-10 text-base md:text-lg transition-colors ${
+                      isCurrent ? 'text-foreground font-medium' : 'text-muted-foreground'
+                    }`}>
+                      {line.text || '♪ ♪ ♪'}
                     </span>
-                  )}
-                </div>
-              );
-            })
-          )}
-        </div>
+                    
+                    {isCurrent && isMicActive && metrics.isVoiceDetected && (
+                      <span className="absolute right-4 text-sm font-medium text-score-perfect animate-score-pop">
+                        +{Math.round(metrics.pitchAccuracy / 10)}
+                      </span>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        )}
       </div>
 
       {/* Score Panel */}
@@ -404,7 +493,7 @@ const Sing = () => {
           <div className="h-1 bg-muted rounded-full mb-4 overflow-hidden">
             <div 
               className="h-full gradient-primary transition-all duration-100"
-              style={{ width: `${(currentTime / (duration || track?.duration || 180)) * 100}%` }}
+              style={{ width: `${duration ? (currentTime / duration) * 100 : 0}%` }}
             />
           </div>
           
@@ -423,6 +512,7 @@ const Sing = () => {
             <Button 
               size="lg" 
               onClick={togglePlay} 
+              disabled={!isPlayerReady}
               className={`gradient-primary text-primary-foreground px-8 ${isPlaying ? 'animate-pulse-glow' : ''}`}
             >
               {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
@@ -436,18 +526,6 @@ const Sing = () => {
           </div>
         </div>
       </div>
-
-      {/* Hidden Audio Element */}
-      {track?.streamUrl && (
-        <audio 
-          ref={audioRef} 
-          src={track.streamUrl} 
-          onTimeUpdate={handleTimeUpdate}
-          onLoadedMetadata={handleLoadedMetadata}
-          onEnded={handleEnded}
-          preload="auto"
-        />
-      )}
     </div>
   );
 };
