@@ -233,10 +233,7 @@ const Sing = () => {
       ?.replace(/\[.*?\]/g, '') // Remove bracket content
       ?.replace(/karaoke|instrumental|lyrics|official|video|audio|hd|4k/gi, '')
       ?.trim() || '';
-    const cleanArtist = track?.artist
-      ?.replace(/- Topic$/i, '')
-      ?.replace(/VEVO$/i, '')
-      ?.trim() || '';
+    const cleanArtist = track?.artist?.trim() || '';
     
     setLyricsSearchTitle(cleanTitle);
     setLyricsSearchArtist(cleanArtist);
@@ -323,7 +320,7 @@ const Sing = () => {
         user_id: user.id,
         song_title: track.title,
         song_artist: track.artist,
-        youtube_video_id: track.id, // Using track id as identifier
+        track_id: track.id,
         score: totalScore,
         rating,
         timing_accuracy: Math.round(avgPitch),
