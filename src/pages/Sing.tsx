@@ -12,11 +12,10 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { ArrowLeft, Play, Pause, Mic, MicOff, RotateCcw, Save, Volume2, VolumeX, Edit2, Search, AudioLines } from "lucide-react";
+import { ArrowLeft, Play, Pause, Mic, MicOff, RotateCcw, Save, Volume2, VolumeX, Edit2, Search } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useVocalAnalysis } from "@/hooks/useVocalAnalysis";
-import { useVocalSuppression } from "@/hooks/useVocalSuppression";
 import { useAuth } from "@/hooks/useAuth";
 import { Slider } from "@/components/ui/slider";
 
@@ -64,17 +63,6 @@ const Sing = () => {
   
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const scoreAccumulatorRef = useRef({ pitch: 0, rhythm: 0, diction: 0, count: 0 });
-  const vocalSuppressionSetupRef = useRef(false);
-
-  const { 
-    setupVocalSuppression, 
-    cleanup: cleanupVocalSuppression,
-    resumeContext,
-    isEnabled: isVocalSuppressionEnabled,
-    toggleSuppression,
-    strength: suppressionStrength,
-    updateStrength
-  } = useVocalSuppression();
 
   const { 
     isActive: isMicActive, 
@@ -119,9 +107,6 @@ const Sing = () => {
     audio.src = track.audioUrl;
     audioRef.current = audio;
 
-    audio.volume = volume / 100;
-    audio.muted = isMuted;
-    
     audio.addEventListener('loadedmetadata', () => {
       setDuration(audio.duration);
       setIsPlayerReady(true);
@@ -133,7 +118,6 @@ const Sing = () => {
     
     audio.addEventListener('play', () => {
       setIsPlaying(true);
-      resumeContext(); // Resume audio context on play
     });
     
     audio.addEventListener('pause', () => {
@@ -168,10 +152,8 @@ const Sing = () => {
       audio.pause();
       audio.src = '';
       audioRef.current = null;
-      cleanupVocalSuppression();
-      vocalSuppressionSetupRef.current = false;
     };
-  }, [track?.audioUrl, setupVocalSuppression, cleanupVocalSuppression, resumeContext]);
+  }, [track?.audioUrl, toast]);
 
   // Update volume/mute when changed
   useEffect(() => {
@@ -256,14 +238,6 @@ const Sing = () => {
       return;
     }
 
-    // Ensure WebAudio context is resumed within the user gesture (required by many browsers)
-    if (!vocalSuppressionSetupRef.current) {
-      setupVocalSuppression(audio);
-      vocalSuppressionSetupRef.current = true;
-    }
-
-    await resumeContext();
-
     try {
       await audio.play();
     } catch (error) {
@@ -274,7 +248,7 @@ const Sing = () => {
         variant: "destructive",
       });
     }
-  }, [isPlaying, isPlayerReady, resumeContext, setupVocalSuppression, toast]);
+  }, [isPlaying, isPlayerReady, toast]);
 
   const toggleMic = useCallback(async () => {
     if (isMicActive) {
@@ -434,17 +408,6 @@ const Sing = () => {
           </DialogContent>
         </Dialog>
         
-        {/* Vocal Suppression Toggle */}
-        <Button 
-          variant={isVocalSuppressionEnabled ? "default" : "outline"} 
-          size="sm" 
-          onClick={toggleSuppression}
-          className={isVocalSuppressionEnabled ? "gradient-primary text-primary-foreground" : ""}
-          title="Suppress vocals (center channel removal)"
-        >
-          <AudioLines className="w-4 h-4 mr-1" />
-          <span className="hidden sm:inline">{isVocalSuppressionEnabled ? "Vocals Off" : "Vocals On"}</span>
-        </Button>
         
         {/* Volume Control */}
         <div className="hidden sm:flex items-center gap-2">
