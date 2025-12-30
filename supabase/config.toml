@@ -1,1 +1,13 @@
 project_id = "wnfgqlywaecvbptjvktt"
+
+[functions.proxy-audio]
+verify_jwt = false
+
+[functions.search-music]
+verify_jwt = false
+
+[functions.fetch-lyrics]
+verify_jwt = false
+
+[functions.transcribe-audio]
+verify_jwt = false
