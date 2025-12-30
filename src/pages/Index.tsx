@@ -119,7 +119,6 @@ const Index = () => {
       });
       if (data?.lyrics && data.lyrics.length > 0) {
         setFetchedLyrics(data.lyrics);
-        toast({ title: "Lyrics found!", description: `${data.lyrics.length} synced lines loaded` });
       } else {
         setFetchedLyrics([]);
         toast({ 
