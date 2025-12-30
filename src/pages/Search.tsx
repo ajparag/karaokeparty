@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,23 +17,27 @@ interface Track {
   album?: string;
 }
 
+type FilterType = 'all' | 'original' | 'instrumental';
+
 const Search = () => {
   const [query, setQuery] = useState("");
   const [tracks, setTracks] = useState<Track[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
+  const [filter, setFilter] = useState<FilterType>('all');
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  const handleSearch = async () => {
+  const handleSearch = async (searchFilter?: FilterType) => {
     if (!query.trim()) return;
     
+    const activeFilter = searchFilter ?? filter;
     setIsLoading(true);
     setHasSearched(true);
     
     try {
       const { data, error } = await supabase.functions.invoke('search-music', {
-        body: { query: query.trim() }
+        body: { query: query.trim(), filter: activeFilter }
       });
       
       if (error) throw error;
@@ -43,7 +47,7 @@ const Search = () => {
       if (data?.tracks?.length === 0) {
         toast({
           title: "No tracks found",
-          description: "Try a different search term",
+          description: "Try a different search term or filter",
         });
       }
     } catch (error) {
@@ -58,6 +62,13 @@ const Search = () => {
       setIsLoading(false);
     }
   };
+
+  // Re-search when filter changes (if we already have a query)
+  useEffect(() => {
+    if (hasSearched && query.trim()) {
+      handleSearch(filter);
+    }
+  }, [filter]);
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
@@ -95,7 +106,7 @@ const Search = () => {
               className="flex-1 bg-muted border-border"
             />
             <Button
-              onClick={handleSearch}
+              onClick={() => handleSearch()}
               disabled={isLoading || !query.trim()}
               className="gradient-primary text-primary-foreground shrink-0"
             >
@@ -106,6 +117,21 @@ const Search = () => {
               )}
             </Button>
           </div>
+        </div>
+        
+        {/* Filter Tabs */}
+        <div className="flex gap-1 ml-2">
+          {(['all', 'original', 'instrumental'] as FilterType[]).map((f) => (
+            <Button
+              key={f}
+              variant={filter === f ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => setFilter(f)}
+              className={filter === f ? 'gradient-primary text-primary-foreground' : ''}
+            >
+              {f === 'all' ? 'All' : f === 'original' ? 'Original' : 'Instrumental'}
+            </Button>
+          ))}
         </div>
       </header>
 
