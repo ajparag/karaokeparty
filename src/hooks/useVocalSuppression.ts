@@ -1,26 +1,23 @@
 import { useRef, useCallback, useState } from 'react';
 
-interface VocalSuppressionOptions {
-  enabled?: boolean;
-  strength?: number; // 0-1, how much to suppress center channel
-}
-
 export function useVocalSuppression() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const sourceNodeRef = useRef<MediaElementAudioSourceNode | null>(null);
   const splitterRef = useRef<ChannelSplitterNode | null>(null);
   const mergerRef = useRef<ChannelMergerNode | null>(null);
-  const gainLRef = useRef<GainNode | null>(null);
-  const gainRRef = useRef<GainNode | null>(null);
-  const invertGainRef = useRef<GainNode | null>(null);
+  const invertGain1Ref = useRef<GainNode | null>(null);
+  const invertGain2Ref = useRef<GainNode | null>(null);
   const [isEnabled, setIsEnabled] = useState(true);
   const [strength, setStrength] = useState(0.95);
   const connectedRef = useRef(false);
+  const audioElementRef = useRef<HTMLAudioElement | null>(null);
 
   const setupVocalSuppression = useCallback((audioElement: HTMLAudioElement) => {
     if (connectedRef.current) return;
     
     try {
+      audioElementRef.current = audioElement;
+      
       // Create audio context
       const audioContext = new AudioContext();
       audioContextRef.current = audioContext;
@@ -37,83 +34,85 @@ export function useVocalSuppression() {
       const merger = audioContext.createChannelMerger(2);
       mergerRef.current = merger;
 
-      // Create gain nodes for each channel
-      const gainL = audioContext.createGain();
-      const gainR = audioContext.createGain();
-      gainLRef.current = gainL;
-      gainRRef.current = gainR;
+      // Create gain nodes for center channel removal
+      // Left output = L - R * strength
+      // Right output = R - L * strength
+      const invertGain1 = audioContext.createGain();
+      invertGain1.gain.value = -strength;
+      invertGain1Ref.current = invertGain1;
 
-      // Create inverted gain for center removal
-      // By subtracting right from left, we remove content common to both (center-panned vocals)
-      const invertGain = audioContext.createGain();
-      invertGain.gain.value = -strength; // Invert and scale
-      invertGainRef.current = invertGain;
-
-      // Connect the nodes for vocal suppression:
-      // Left channel = L - (R * strength)
-      // Right channel = R - (L * strength)
-      
-      source.connect(splitter);
-
-      // Left output: Left channel minus inverted Right
-      splitter.connect(gainL, 0); // Left channel
-      splitter.connect(invertGain, 1); // Right channel to inverter
-      gainL.connect(merger, 0, 0);
-      invertGain.connect(merger, 0, 0);
-
-      // Right output: Right channel minus inverted Left  
       const invertGain2 = audioContext.createGain();
       invertGain2.gain.value = -strength;
-      splitter.connect(gainR, 1); // Right channel
-      splitter.connect(invertGain2, 0); // Left channel to inverter
-      gainR.connect(merger, 0, 1);
-      invertGain2.connect(merger, 0, 1);
+      invertGain2Ref.current = invertGain2;
+
+      // Connect: source -> splitter
+      source.connect(splitter);
+
+      // Left channel path: L direct + (-R * strength)
+      splitter.connect(merger, 0, 0); // L -> Left output
+      splitter.connect(invertGain1, 1); // R -> inverter
+      invertGain1.connect(merger, 0, 0); // inverted R -> Left output
+
+      // Right channel path: R direct + (-L * strength)
+      splitter.connect(merger, 1, 1); // R -> Right output
+      splitter.connect(invertGain2, 0); // L -> inverter
+      invertGain2.connect(merger, 0, 1); // inverted L -> Right output
 
       // Connect to destination
       merger.connect(audioContext.destination);
 
       connectedRef.current = true;
-      console.log('Vocal suppression enabled with strength:', strength);
+      console.log('Vocal suppression setup complete, strength:', strength);
     } catch (error) {
       console.error('Failed to setup vocal suppression:', error);
-      // Fallback: just connect source directly
+      // If setup fails, try to connect source directly to output
       if (sourceNodeRef.current && audioContextRef.current) {
         sourceNodeRef.current.connect(audioContextRef.current.destination);
+        connectedRef.current = true;
       }
     }
   }, [strength]);
 
   const updateStrength = useCallback((newStrength: number) => {
     setStrength(newStrength);
-    if (invertGainRef.current) {
-      invertGainRef.current.gain.value = -newStrength;
+    if (invertGain1Ref.current && invertGain2Ref.current) {
+      invertGain1Ref.current.gain.value = -newStrength;
+      invertGain2Ref.current.gain.value = -newStrength;
     }
   }, []);
 
   const toggleSuppression = useCallback(() => {
-    setIsEnabled(prev => !prev);
-    if (invertGainRef.current) {
-      invertGainRef.current.gain.value = isEnabled ? 0 : -strength;
+    const newEnabled = !isEnabled;
+    setIsEnabled(newEnabled);
+    if (invertGain1Ref.current && invertGain2Ref.current) {
+      const value = newEnabled ? -strength : 0;
+      invertGain1Ref.current.gain.value = value;
+      invertGain2Ref.current.gain.value = value;
     }
   }, [isEnabled, strength]);
 
   const cleanup = useCallback(() => {
-    if (audioContextRef.current) {
+    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
       audioContextRef.current.close();
-      audioContextRef.current = null;
     }
+    audioContextRef.current = null;
     sourceNodeRef.current = null;
     splitterRef.current = null;
     mergerRef.current = null;
-    gainLRef.current = null;
-    gainRRef.current = null;
-    invertGainRef.current = null;
+    invertGain1Ref.current = null;
+    invertGain2Ref.current = null;
+    audioElementRef.current = null;
     connectedRef.current = false;
   }, []);
 
   const resumeContext = useCallback(async () => {
     if (audioContextRef.current?.state === 'suspended') {
-      await audioContextRef.current.resume();
+      try {
+        await audioContextRef.current.resume();
+        console.log('Audio context resumed');
+      } catch (error) {
+        console.error('Failed to resume audio context:', error);
+      }
     }
   }, []);
 
