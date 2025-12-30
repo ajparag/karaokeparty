@@ -236,10 +236,10 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       
       mediaRecorder.start(1000); // Collect chunks every 1 second
       
-      // Transcribe every 3 seconds
+      // Transcribe every 2 seconds
       transcriptionIntervalRef.current = setInterval(() => {
         transcribeAudio();
-      }, 3000);
+      }, 2000);
 
       const audioContext = new AudioContext();
       audioContextRef.current = audioContext;
