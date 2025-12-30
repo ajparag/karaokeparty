@@ -14,6 +14,7 @@ interface Track {
   source: 'saavn';
   audioUrl: string;
   album?: string;
+  playCount?: number;
 }
 
 // Format duration from seconds to mm:ss
@@ -74,6 +75,9 @@ async function searchSaavn(query: string): Promise<Track[]> {
         || song.artists?.all?.map((a: any) => a.name).join(', ')
         || 'Unknown Artist';
 
+      // Get play count for sorting
+      const playCount = parseInt(song.playCount, 10) || 0;
+
       return {
         id: song.id,
         title: song.name || 'Unknown',
@@ -83,10 +87,14 @@ async function searchSaavn(query: string): Promise<Track[]> {
         source: 'saavn' as const,
         audioUrl: audioUrl,
         album: song.album?.name || '',
+        playCount: playCount,
       };
     });
 
-    console.log(`Found ${tracks.length} tracks from Saavn`);
+    // Sort by play count (most played first)
+    tracks.sort((a, b) => (b.playCount || 0) - (a.playCount || 0));
+
+    console.log(`Found ${tracks.length} tracks from Saavn (sorted by playCount)`);
     return tracks;
   } catch (error) {
     console.error('Saavn search error:', error);

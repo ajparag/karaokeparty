@@ -87,17 +87,36 @@ const Sing = () => {
     }
   });
 
-  // Load track from session storage
+  // Load track and pre-fetched lyrics from session storage
   useEffect(() => {
     const stored = sessionStorage.getItem('selectedTrack');
     if (stored) {
       const parsed = JSON.parse(stored);
       setTrack(parsed);
-      fetchLyrics(parsed.title, parsed.artist);
+      
+      // Check for pre-fetched lyrics first
+      const prefetchedLyrics = sessionStorage.getItem('prefetchedLyrics');
+      if (prefetchedLyrics) {
+        try {
+          const parsedLyrics = JSON.parse(prefetchedLyrics);
+          if (parsedLyrics && parsedLyrics.length > 0) {
+            setLyrics(parsedLyrics);
+            toast({ title: "Lyrics loaded!", description: `${parsedLyrics.length} synced lines ready` });
+          } else {
+            fetchLyrics(parsed.title, parsed.artist);
+          }
+        } catch {
+          fetchLyrics(parsed.title, parsed.artist);
+        }
+        // Clean up after use
+        sessionStorage.removeItem('prefetchedLyrics');
+      } else {
+        fetchLyrics(parsed.title, parsed.artist);
+      }
     } else {
       navigate('/search');
     }
-  }, [trackId, navigate]);
+  }, [trackId, navigate, toast]);
 
   // Initialize HTML5 Audio Player
   useEffect(() => {
@@ -110,6 +129,11 @@ const Sing = () => {
     audio.addEventListener('loadedmetadata', () => {
       setDuration(audio.duration);
       setIsPlayerReady(true);
+      
+      // Auto-start microphone when player is ready
+      startAnalysis().catch(err => {
+        console.error('Failed to auto-start microphone:', err);
+      });
     });
     
     audio.addEventListener('timeupdate', () => {
@@ -152,8 +176,9 @@ const Sing = () => {
       audio.pause();
       audio.src = '';
       audioRef.current = null;
+      stopAnalysis(); // Stop microphone when leaving
     };
-  }, [track?.audioUrl, toast]);
+  }, [track?.audioUrl, toast, startAnalysis, stopAnalysis]);
 
   // Update volume/mute when changed
   useEffect(() => {
