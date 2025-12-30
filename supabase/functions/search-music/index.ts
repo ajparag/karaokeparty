@@ -18,14 +18,15 @@ interface Track {
   previewUrl?: string;
 }
 
-// Simple in-memory cache to reduce repeat calls & rate limiting
-const CACHE_TTL_MS = 60_000;
-const cache = new Map<string, { ts: number; tracks: Track[] }>();
+// Simple in-memory cache to reduce repeat calls & rate limiting.
+// IMPORTANT: do NOT cache empty results (Deezer can intermittently return 0 results).
+const CACHE_TTL_OK_MS = 5 * 60_000; // 5 min for successful results
+const cache = new Map<string, { ts: number; ttl: number; tracks: Track[] }>();
 
 function getCache(key: string): Track[] | null {
   const hit = cache.get(key);
   if (!hit) return null;
-  if (Date.now() - hit.ts > CACHE_TTL_MS) {
+  if (Date.now() - hit.ts > hit.ttl) {
     cache.delete(key);
     return null;
   }
@@ -33,68 +34,82 @@ function getCache(key: string): Track[] | null {
 }
 
 function setCache(key: string, tracks: Track[]) {
-  cache.set(key, { ts: Date.now(), tracks });
+  if (!tracks.length) return; // never cache empty results
+  cache.set(key, { ts: Date.now(), ttl: CACHE_TTL_OK_MS, tracks });
 }
 
-// Deezer API search
+// Deezer API search (single attempt; no cache)
+async function searchDeezerOnce(q: string): Promise<Track[]> {
+  const encodedQuery = encodeURIComponent(q);
+
+  const response = await fetch(
+    `https://api.deezer.com/search?q=${encodedQuery}&index=0&limit=30`,
+    {
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': 'LovableKaraoke/1.0 (+https://lovable.dev)',
+      },
+    }
+  );
+
+  if (!response.ok) {
+    console.error('Deezer API error:', response.status);
+    return [];
+  }
+
+  const raw = await response.text();
+  let data: any;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    console.error('Deezer returned non-JSON response (first 200 chars):', raw.slice(0, 200));
+    return [];
+  }
+
+  if (data?.error) {
+    console.error('Deezer API payload error:', data.error);
+    return [];
+  }
+
+  if (!data?.data || !Array.isArray(data.data)) {
+    console.error('Unexpected Deezer payload (no data array):', data);
+    return [];
+  }
+
+  return data.data.map((track: any) => ({
+    id: `deezer_${track.id}`,
+    title: track.title || 'Unknown',
+    artist: track.artist?.name || 'Unknown Artist',
+    album: track.album?.title || '',
+    thumbnail: track.album?.cover_medium || track.album?.cover_small || '',
+    duration: track.duration || 0,
+    language: 'Unknown',
+    source: 'deezer' as const,
+    previewUrl: track.preview || '',
+  }));
+}
+
+// Deezer API search (with cache + one retry on empty)
 async function searchDeezer(query: string): Promise<Track[]> {
   const q = query.trim();
-  const cacheKey = `deezer:${q.toLowerCase()}`;
+  if (!q) return [];
 
+  const cacheKey = `deezer:${q.toLowerCase()}`;
   const cached = getCache(cacheKey);
   if (cached) return cached;
 
   try {
-    const encodedQuery = encodeURIComponent(q);
-
-    const response = await fetch(
-      `https://api.deezer.com/search?q=${encodedQuery}&index=0&limit=30`,
-      {
-        headers: {
-          Accept: 'application/json',
-          'User-Agent': 'LovableKaraoke/1.0 (+https://lovable.dev)',
-        },
-      }
-    );
-
-    if (!response.ok) {
-      console.error('Deezer API error:', response.status);
-      return [];
+    const first = await searchDeezerOnce(q);
+    if (first.length) {
+      setCache(cacheKey, first);
+      return first;
     }
 
-    const raw = await response.text();
-    let data: any;
-    try {
-      data = JSON.parse(raw);
-    } catch {
-      console.error('Deezer returned non-JSON response (first 200 chars):', raw.slice(0, 200));
-      return [];
-    }
-
-    if (data?.error) {
-      console.error('Deezer API payload error:', data.error);
-      return [];
-    }
-
-    if (!data?.data || !Array.isArray(data.data)) {
-      console.error('Unexpected Deezer payload (no data array):', data);
-      return [];
-    }
-
-    const tracks: Track[] = data.data.map((track: any) => ({
-      id: `deezer_${track.id}`,
-      title: track.title || 'Unknown',
-      artist: track.artist?.name || 'Unknown Artist',
-      album: track.album?.title || '',
-      thumbnail: track.album?.cover_medium || track.album?.cover_small || '',
-      duration: track.duration || 0,
-      language: 'Unknown',
-      source: 'deezer' as const,
-      previewUrl: track.preview || '',
-    }));
-
-    setCache(cacheKey, tracks);
-    return tracks;
+    // Retry once if Deezer returns an empty set (happens intermittently).
+    await new Promise((r) => setTimeout(r, 250));
+    const second = await searchDeezerOnce(q);
+    if (second.length) setCache(cacheKey, second);
+    return second;
   } catch (error) {
     console.error('Deezer search error:', error);
     return [];
