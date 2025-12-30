@@ -245,15 +245,34 @@ const Sing = () => {
     setCurrentLineIndex(index);
   }, [currentTime, lyrics]);
 
-  const togglePlay = useCallback(() => {
-    if (!audioRef.current || !isPlayerReady) return;
-    
+  const togglePlay = useCallback(async () => {
+    const audio = audioRef.current;
+    if (!audio || !isPlayerReady) return;
+
     if (isPlaying) {
-      audioRef.current.pause();
-    } else {
-      audioRef.current.play();
+      audio.pause();
+      return;
     }
-  }, [isPlaying, isPlayerReady]);
+
+    // Ensure WebAudio context is resumed within the user gesture (required by many browsers)
+    if (!vocalSuppressionSetupRef.current) {
+      setupVocalSuppression(audio);
+      vocalSuppressionSetupRef.current = true;
+    }
+
+    await resumeContext();
+
+    try {
+      await audio.play();
+    } catch (error) {
+      console.error('Audio play() failed:', error);
+      toast({
+        title: "Playback blocked",
+        description: "Your browser blocked audio playback. Try tapping Play again.",
+        variant: "destructive",
+      });
+    }
+  }, [isPlaying, isPlayerReady, resumeContext, setupVocalSuppression, toast]);
 
   const toggleMic = useCallback(async () => {
     if (isMicActive) {
