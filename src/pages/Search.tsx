@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Search as SearchIcon, ArrowLeft, Music, Loader2, Play, Youtube } from "lucide-react";
+import { Search as SearchIcon, ArrowLeft, Music, Loader2, Play } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
@@ -12,8 +12,9 @@ interface Track {
   artist: string;
   thumbnail: string;
   duration: string;
-  source: 'youtube';
-  videoId: string;
+  source: 'saavn';
+  audioUrl: string;
+  album?: string;
 }
 
 const Search = () => {
@@ -67,7 +68,7 @@ const Search = () => {
   const handleSelectTrack = (track: Track) => {
     // Store track info in sessionStorage for the sing page
     sessionStorage.setItem('selectedTrack', JSON.stringify(track));
-    navigate(`/sing/${track.videoId}`);
+    navigate(`/sing/${track.id}`);
   };
 
   return (
@@ -87,7 +88,7 @@ const Search = () => {
           <div className="flex-1 flex gap-2">
             <Input
               type="text"
-              placeholder="Search for karaoke tracks... (e.g., 'Tum Hi Ho karaoke')"
+              placeholder="Search for songs... (e.g., 'Tum Hi Ho', 'Kesariya')"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyPress={handleKeyPress}
@@ -113,18 +114,18 @@ const Search = () => {
         {!hasSearched ? (
           <div className="text-center py-16">
             <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center mx-auto mb-6">
-              <Youtube className="w-10 h-10 text-muted-foreground" />
+              <Music className="w-10 h-10 text-muted-foreground" />
             </div>
             <h2 className="text-2xl font-semibold mb-2">Find Your Song</h2>
             <p className="text-muted-foreground max-w-md mx-auto">
-              Search for Bollywood, Tollywood, or regional karaoke songs from YouTube!
+              Search for Bollywood, Tollywood, or regional songs from JioSaavn!
             </p>
             
             {/* Popular searches */}
             <div className="mt-8">
               <p className="text-sm text-muted-foreground mb-3">Popular searches:</p>
               <div className="flex flex-wrap justify-center gap-2">
-                {['Tum Hi Ho karaoke', 'Kal Ho Naa Ho karaoke', 'Chaiyya Chaiyya karaoke', 'Kesariya karaoke'].map((term) => (
+                {['Tum Hi Ho', 'Kal Ho Naa Ho', 'Chaiyya Chaiyya', 'Kesariya', 'Mere Sapno Ki Rani'].map((term) => (
                   <Button
                     key={term}
                     variant="outline"
@@ -144,7 +145,7 @@ const Search = () => {
         ) : isLoading ? (
           <div className="py-16 text-center">
             <Loader2 className="w-10 h-10 animate-spin text-primary mx-auto mb-4" />
-            <p className="text-muted-foreground">Searching YouTube...</p>
+            <p className="text-muted-foreground">Searching JioSaavn...</p>
           </div>
         ) : tracks.length === 0 ? (
           <div className="text-center py-16">
@@ -159,7 +160,7 @@ const Search = () => {
         ) : (
           <div className="space-y-3">
             <p className="text-muted-foreground text-sm mb-4">
-              Found {tracks.length} track{tracks.length !== 1 ? 's' : ''} on YouTube
+              Found {tracks.length} track{tracks.length !== 1 ? 's' : ''}
             </p>
             
             {tracks.map((track) => (
@@ -170,7 +171,7 @@ const Search = () => {
               >
                 <div className="flex items-center gap-4">
                   {/* Thumbnail */}
-                  <div className="relative w-24 h-16 rounded-lg overflow-hidden bg-muted shrink-0">
+                  <div className="relative w-16 h-16 rounded-lg overflow-hidden bg-muted shrink-0">
                     {track.thumbnail ? (
                       <img
                         src={track.thumbnail}
@@ -185,10 +186,6 @@ const Search = () => {
                     <div className="absolute inset-0 bg-background/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                       <Play className="w-6 h-6 text-primary fill-primary" />
                     </div>
-                    {/* Duration badge */}
-                    <div className="absolute bottom-1 right-1 px-1 py-0.5 bg-background/80 rounded text-xs font-medium">
-                      {track.duration}
-                    </div>
                   </div>
                   
                   {/* Info */}
@@ -200,10 +197,13 @@ const Search = () => {
                       {track.artist}
                     </p>
                     <div className="flex items-center gap-2 mt-1">
-                      <span className="text-xs px-2 py-0.5 rounded-full bg-red-500/10 text-red-500 flex items-center gap-1">
-                        <Youtube className="w-3 h-3" />
-                        YouTube
-                      </span>
+                      <span className="text-xs text-muted-foreground">{track.duration}</span>
+                      {track.album && (
+                        <>
+                          <span className="text-muted-foreground">•</span>
+                          <span className="text-xs text-muted-foreground truncate">{track.album}</span>
+                        </>
+                      )}
                     </div>
                   </div>
                   
