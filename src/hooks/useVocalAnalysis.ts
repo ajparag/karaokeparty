@@ -25,7 +25,7 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     pitch: 0,
     pitchAccuracy: 0,
     rhythm: 0,
-    diction: 50,
+    diction: 0,
     volume: 0,
     isVoiceDetected: false,
   });
@@ -37,7 +37,7 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const transcriptionIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const lastDictionScoreRef = useRef<number>(50);
+  const lastDictionScoreRef = useRef<number>(0);
   const transcriptionDisabledRef = useRef(false);
   const transcriptionDisabledReasonRef = useRef<string | null>(null);
   
@@ -129,12 +129,12 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
         const transcribedText = data.text;
 
         // Calculate diction score based on similarity to expected lyrics
-        let dictionScore = 50;
+        let dictionScore = 0;
         if (options.expectedLyrics) {
           dictionScore = calculateSimilarity(transcribedText, options.expectedLyrics);
         } else if (transcribedText.length > 0) {
           // If no expected lyrics, give points for clear speech
-          dictionScore = Math.min(80, 50 + transcribedText.split(/\s+/).length * 5);
+          dictionScore = Math.min(80, transcribedText.split(/\s+/).length * 10);
         }
 
         lastDictionScoreRef.current = dictionScore;
@@ -211,7 +211,7 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       pitchAccuracy = Math.max(0, 100 - (normalizedVariance * 200));
     }
 
-    let rhythm = 50;
+    let rhythm = 0;
     if (beatTimesRef.current.length > 3) {
       const intervals: number[] = [];
       for (let i = 1; i < beatTimesRef.current.length; i++) {
@@ -352,12 +352,12 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     volumeHistoryRef.current = [];
     beatTimesRef.current = [];
     audioChunksRef.current = [];
-    lastDictionScoreRef.current = 50;
+    lastDictionScoreRef.current = 0;
     setMetrics({
       pitch: 0,
       pitchAccuracy: 0,
       rhythm: 0,
-      diction: 50,
+      diction: 0,
       volume: 0,
       isVoiceDetected: false,
     });
