@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback } from 'react';
 
-const WHISPER_MODEL_ID = 'onnx-community/whisper-tiny';
+const WHISPER_MODEL_ID = 'onnx-community/whisper-small';
 const WHISPER_LANGUAGE_PRIMARY = 'hi';
 const WHISPER_LANGUAGE_FALLBACK = 'hindi';
 
@@ -20,6 +20,10 @@ export function useLocalWhisper() {
   const modelIdRef = useRef<string | null>(null);
   const isLoadingRef = useRef(false);
   const isModelReadyRef = useRef(false);
+
+  // Force decoder prompts to Hindi + transcribe (prevents English translation/romanization)
+  const forcedDecoderIdsPrimaryRef = useRef<any>(null);
+  const forcedDecoderIdsFallbackRef = useRef<any>(null);
 
   const loadModel = useCallback(async () => {
     if (isLoadingRef.current) return;

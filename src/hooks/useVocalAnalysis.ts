@@ -1,6 +1,8 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useLocalWhisper } from './useLocalWhisper';
 
+const hasDevanagari = (text: string) => /[\u0900-\u097F]/.test(text);
+
 interface VocalMetrics {
   pitch: number;           // Current detected pitch in Hz
   pitchAccuracy: number;   // 0-100 accuracy score
@@ -172,15 +174,23 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
 
       console.log('[whisper] calling model...');
       const result = await transcribe(audio16k);
-      const transcribedText = result?.text?.trim() || '';
-      console.log('[whisper] result', { text: transcribedText });
+      const rawText = result?.text?.trim() || '';
 
-      // Keep the last text around so the UI reliably shows something once we get any output.
+      // Only accept Devanagari output for display; ignore English/romanized hallucinations.
+      const transcribedText = rawText && hasDevanagari(rawText) ? rawText : '';
+
+      console.log('[whisper] result', {
+        rawText,
+        acceptedForDisplay: Boolean(transcribedText),
+      });
+
+      // Keep the last *Hindi (Devanagari)* text around so the UI doesn't get polluted with English.
       if (transcribedText) {
         lastTranscribedTextRef.current = transcribedText;
       }
 
       if (!transcribedText) return;
+
 
       let dictionScore = 0;
       if (options.expectedLyrics) {
@@ -481,20 +491,33 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     });
   }, []);
 
-  // Retry transcription - resets disabled state and restarts interval
+  // Retry transcription - resets disabled state and restarts loop
   const retryTranscription = useCallback(async () => {
     transcriptionDisabledRef.current = false;
     setIsTranscriptionDisabled(false);
-    
+
+    // Clear any existing timer
+    if (transcriptionIntervalRef.current) {
+      window.clearTimeout(transcriptionIntervalRef.current);
+      transcriptionIntervalRef.current = null;
+    }
+
+    // Reset last text so we don't keep stale/incorrect output
+    lastTranscribedTextRef.current = '';
+    setMetrics((prev) => ({ ...prev, transcribedText: '' }));
+
     // Load model if not ready
     if (!isModelReady) {
       await loadModel();
     }
-    
-    if (isActive && !transcriptionIntervalRef.current) {
-      transcriptionIntervalRef.current = window.setInterval(() => {
-        transcribeAudio();
-      }, 1000);
+
+    // Restart the same self-scheduling loop used in startAnalysis
+    if (isActive) {
+      const loop = async () => {
+        await transcribeAudio();
+        transcriptionIntervalRef.current = window.setTimeout(loop, 1000);
+      };
+      transcriptionIntervalRef.current = window.setTimeout(loop, 0);
     }
   }, [isActive, transcribeAudio, isModelReady, loadModel]);
 
