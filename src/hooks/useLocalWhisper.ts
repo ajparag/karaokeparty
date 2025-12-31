@@ -12,6 +12,7 @@ export function useLocalWhisper() {
   
   const pipelineRef = useRef<any>(null);
   const isLoadingRef = useRef(false);
+  const isModelReadyRef = useRef(false);
 
   const loadModel = useCallback(async () => {
     if (pipelineRef.current || isLoadingRef.current) return;
@@ -42,6 +43,7 @@ export function useLocalWhisper() {
       );
       
       pipelineRef.current = transcriber;
+      isModelReadyRef.current = true;
       setIsModelReady(true);
       console.log('Whisper model loaded successfully');
     } catch (err) {
@@ -65,10 +67,12 @@ export function useLocalWhisper() {
         );
         
         pipelineRef.current = transcriber;
+        isModelReadyRef.current = true;
         setIsModelReady(true);
         console.log('Whisper model loaded (WASM fallback)');
       } catch (fallbackErr) {
         console.error('Failed to load Whisper model (fallback):', fallbackErr);
+        isModelReadyRef.current = false;
         setError('Failed to load speech recognition model');
       }
     } finally {
@@ -132,9 +136,13 @@ export function useLocalWhisper() {
   const dispose = useCallback(() => {
     if (pipelineRef.current) {
       pipelineRef.current = null;
+      isModelReadyRef.current = false;
       setIsModelReady(false);
     }
   }, []);
+
+  // Expose ref for synchronous checks
+  const checkModelReady = useCallback(() => isModelReadyRef.current, []);
 
   return {
     isModelLoading,
@@ -144,5 +152,6 @@ export function useLocalWhisper() {
     loadModel,
     transcribe,
     dispose,
+    checkModelReady,
   };
 }

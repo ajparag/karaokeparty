@@ -678,9 +678,13 @@ const Sing = () => {
                 const actualIndex = Math.max(0, currentLineIndex - 1) + i;
                 const isCurrent = actualIndex === currentLineIndex;
                 const isPast = actualIndex < currentLineIndex;
-                const progress = isCurrent && line.duration 
+                const lineProgress = isCurrent && line.duration 
                   ? Math.min(100, ((currentTime - line.time) / line.duration) * 100) 
                   : isPast ? 100 : 0;
+                
+                // Split text into words for per-word highlighting
+                const words = (line.text || '♪ ♪ ♪').split(/\s+/);
+                const wordCount = words.length;
                 
                 return (
                   <div 
@@ -689,11 +693,6 @@ const Sing = () => {
                       isCurrent ? 'ring-2 ring-primary scale-[1.02]' : isPast ? 'opacity-40' : 'opacity-60'
                     }`}
                   >
-                    <div 
-                      className="singing-bar-progress" 
-                      style={{ width: `${progress}%` }} 
-                    />
-                    
                     {isCurrent && isMicActive && (
                       <div 
                         className="singing-bar-performance"
@@ -703,11 +702,52 @@ const Sing = () => {
                     
                     <span 
                       className={`relative z-10 text-lg md:text-2xl lg:text-3xl leading-tight transition-colors tracking-wide ${
-                        isCurrent ? 'text-foreground font-semibold' : 'text-muted-foreground'
+                        isCurrent ? 'font-semibold' : 'text-muted-foreground'
                       }`}
                       style={{ wordSpacing: '0.3em' }}
                     >
-                      {line.text || '♪ ♪ ♪'}
+                      {words.map((word, wordIdx) => {
+                        // Calculate per-word progress
+                        const wordStart = (wordIdx / wordCount) * 100;
+                        const wordEnd = ((wordIdx + 1) / wordCount) * 100;
+                        const isWordComplete = lineProgress >= wordEnd;
+                        const isWordCurrent = lineProgress >= wordStart && lineProgress < wordEnd;
+                        const wordProgress = isWordCurrent 
+                          ? ((lineProgress - wordStart) / (wordEnd - wordStart)) * 100 
+                          : isWordComplete ? 100 : 0;
+                        
+                        return (
+                          <span 
+                            key={wordIdx} 
+                            className="relative inline-block"
+                            style={{ marginRight: wordIdx < words.length - 1 ? '0.3em' : 0 }}
+                          >
+                            {/* Background word */}
+                            <span className={isCurrent ? 'text-muted-foreground/50' : ''}>
+                              {word}
+                            </span>
+                            {/* Highlighted overlay */}
+                            {isCurrent && (
+                              <span 
+                                className="absolute left-0 top-0 text-primary overflow-hidden whitespace-nowrap"
+                                style={{ 
+                                  width: `${wordProgress}%`,
+                                  clipPath: `inset(0 ${100 - wordProgress}% 0 0)`,
+                                }}
+                              >
+                                {word}
+                              </span>
+                            )}
+                            {/* Underline progress indicator */}
+                            {isCurrent && (
+                              <span 
+                                className="absolute bottom-0 left-0 h-0.5 bg-primary rounded-full transition-all duration-75"
+                                style={{ width: `${wordProgress}%` }}
+                              />
+                            )}
+                          </span>
+                        );
+                      })}
                     </span>
                     
                     {isCurrent && isMicActive && metrics.isVoiceDetected && (
@@ -739,6 +779,14 @@ const Sing = () => {
             </div>
           )}
           
+          {/* Scoring Weights Info */}
+          <div className="mb-3 p-2 bg-muted/30 rounded-lg border border-border/30">
+            <p className="text-xs text-muted-foreground text-center">
+              <span className="font-medium text-foreground">Scoring Weights:</span>{' '}
+              Pitch <span className="text-primary">40%</span> • Rhythm <span className="text-primary">35%</span> • Diction <span className="text-primary">25%</span>
+            </p>
+          </div>
+          
           {/* Metrics */}
           <div className="grid grid-cols-4 gap-3 md:gap-4 mb-4">
             <ScoreItem 
@@ -746,12 +794,16 @@ const Sing = () => {
               value={metrics.pitchAccuracy} 
               color={getScoreColor(metrics.pitchAccuracy)}
               isActive={metrics.isVoiceDetected}
+              hint="Variance < 20% = good"
+              weight="40%"
             />
             <ScoreItem 
               label="Rhythm" 
               value={metrics.rhythm} 
               color={getScoreColor(metrics.rhythm)}
               isActive={metrics.isVoiceDetected}
+              hint="Beat consistency"
+              weight="35%"
             />
             <ScoreItem 
               label={isModelLoading ? `Diction (${loadProgress}%)` : "Diction"} 
@@ -760,6 +812,8 @@ const Sing = () => {
               isActive={metrics.isVoiceDetected}
               disabled={isTranscriptionDisabled || isModelLoading}
               onRetry={retryTranscription}
+              hint="Word match %"
+              weight="25%"
             />
             <div className="text-center">
               <p className={`text-2xl md:text-3xl font-bold ${rating.color}`}>
@@ -817,10 +871,12 @@ interface ScoreItemProps {
   isActive: boolean;
   disabled?: boolean;
   onRetry?: () => void;
+  hint?: string;
+  weight?: string;
 }
 
-const ScoreItem = ({ label, value, color, isActive, disabled, onRetry }: ScoreItemProps) => (
-  <div className="text-center relative">
+const ScoreItem = ({ label, value, color, isActive, disabled, onRetry, hint, weight }: ScoreItemProps) => (
+  <div className="text-center relative group">
     <div className="h-2 bg-muted rounded-full overflow-hidden mb-2">
       <div 
         className={`h-full transition-all duration-200 ${disabled ? 'bg-muted-foreground/30' : color}`} 
@@ -841,7 +897,14 @@ const ScoreItem = ({ label, value, color, isActive, disabled, onRetry }: ScoreIt
         {Math.round(value)}%
       </p>
     )}
-    <p className="text-xs text-muted-foreground">{label}</p>
+    <p className="text-xs text-muted-foreground">
+      {label} {weight && <span className="text-primary/70">({weight})</span>}
+    </p>
+    {hint && (
+      <p className="text-[10px] text-muted-foreground/60 opacity-0 group-hover:opacity-100 transition-opacity">
+        {hint}
+      </p>
+    )}
   </div>
 );
 
