@@ -118,125 +118,81 @@ const Sing = () => {
     }
   }, [trackId, navigate, toast]);
 
-  // Initialize HTML5 Audio Player with proxy
+  // Initialize HTML5 Audio Player with proxy URL
   useEffect(() => {
     if (!track?.audioUrl) return;
 
     let isMounted = true;
+    setIsLoadingAudio(true);
+    
     const audio = new Audio();
     audioRef.current = audio;
-
-    const loadAudio = async () => {
-      setIsLoadingAudio(true);
+    
+    // Use proxy URL directly as audio source (simpler, no blob)
+    const proxyUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/proxy-audio?url=${encodeURIComponent(track.audioUrl)}`;
+    audio.src = proxyUrl;
+    audio.crossOrigin = 'anonymous';
+    
+    const onLoadedMetadata = () => {
+      if (!isMounted) return;
+      setDuration(audio.duration);
+      setIsPlayerReady(true);
+      setIsLoadingAudio(false);
       
-      try {
-        // Use proxy to fetch audio (avoids CORS issues)
-        const proxyUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/proxy-audio`;
-        
-        const response = await fetch(proxyUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ url: track.audioUrl }),
-        });
-
-        if (!response.ok) {
-          throw new Error(`Failed to proxy audio: ${response.status}`);
-        }
-
-        // Create blob URL from proxied audio
-        const blob = await response.blob();
-        const blobUrl = URL.createObjectURL(blob);
-
-        if (!isMounted) {
-          URL.revokeObjectURL(blobUrl);
-          return;
-        }
-
-        audio.src = blobUrl;
-        
-        // Store blob URL for cleanup
-        const cleanup = () => URL.revokeObjectURL(blobUrl);
-
-        audio.addEventListener('loadedmetadata', () => {
-          if (!isMounted) return;
-          setDuration(audio.duration);
-          setIsPlayerReady(true);
-          setIsLoadingAudio(false);
-          
-          // Auto-start microphone when player is ready
-          startAnalysis().catch(err => {
-            console.error('Failed to auto-start microphone:', err);
-          });
-        });
-        
-        audio.addEventListener('timeupdate', () => {
-          if (isMounted) setCurrentTime(audio.currentTime);
-        });
-        
-        audio.addEventListener('play', () => {
-          if (isMounted) setIsPlaying(true);
-        });
-        
-        audio.addEventListener('pause', () => {
-          if (isMounted) setIsPlaying(false);
-        });
-        
-        audio.addEventListener('ended', () => {
-          if (isMounted) {
-            setIsPlaying(false);
-            setShowResults(true);
-          }
-        });
-        
-        audio.addEventListener('error', (e) => {
-          console.error('Audio error:', {
-            event: e,
-            mediaError: audio.error,
-            readyState: audio.readyState,
-            networkState: audio.networkState,
-          });
-          if (isMounted) {
-            setIsLoadingAudio(false);
-            toast({
-              title: "Audio playback error",
-              description: "Failed to load audio. Please try another song.",
-              variant: "destructive",
-            });
-          }
-        });
-
-        // Preload the audio
-        audio.load();
-
-        // Return cleanup function for blob URL
-        return cleanup;
-      } catch (error) {
-        console.error('Failed to load audio via proxy:', error);
-        if (isMounted) {
-          setIsLoadingAudio(false);
-          toast({
-            title: "Failed to load audio",
-            description: "Could not load the track. Please try another song.",
-            variant: "destructive",
-          });
-        }
+      // Auto-start microphone
+      startAnalysis().catch(err => console.error('Mic start failed:', err));
+    };
+    
+    const onTimeUpdate = () => {
+      if (isMounted) setCurrentTime(audio.currentTime);
+    };
+    
+    const onPlay = () => {
+      if (isMounted) setIsPlaying(true);
+    };
+    
+    const onPause = () => {
+      if (isMounted) setIsPlaying(false);
+    };
+    
+    const onEnded = () => {
+      if (isMounted) {
+        setIsPlaying(false);
+        setShowResults(true);
       }
     };
-
-    let cleanupBlobUrl: (() => void) | undefined;
-    loadAudio().then(cleanup => {
-      cleanupBlobUrl = cleanup;
-    });
+    
+    const onError = () => {
+      console.error('Audio error:', audio.error);
+      if (isMounted) {
+        setIsLoadingAudio(false);
+        toast({
+          title: "Audio error",
+          description: "Failed to load. Try another song.",
+          variant: "destructive",
+        });
+      }
+    };
+    
+    audio.addEventListener('loadedmetadata', onLoadedMetadata);
+    audio.addEventListener('timeupdate', onTimeUpdate);
+    audio.addEventListener('play', onPlay);
+    audio.addEventListener('pause', onPause);
+    audio.addEventListener('ended', onEnded);
+    audio.addEventListener('error', onError);
 
     return () => {
       isMounted = false;
+      audio.removeEventListener('loadedmetadata', onLoadedMetadata);
+      audio.removeEventListener('timeupdate', onTimeUpdate);
+      audio.removeEventListener('play', onPlay);
+      audio.removeEventListener('pause', onPause);
+      audio.removeEventListener('ended', onEnded);
+      audio.removeEventListener('error', onError);
       audio.pause();
       audio.src = '';
       audioRef.current = null;
       stopAnalysis();
-      if (cleanupBlobUrl) cleanupBlobUrl();
     };
   }, [track?.audioUrl, toast, startAnalysis, stopAnalysis]);
 
