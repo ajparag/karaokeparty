@@ -21,6 +21,7 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
   const [isActive, setIsActive] = useState(false);
   const [hasPermission, setHasPermission] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isTranscriptionDisabled, setIsTranscriptionDisabled] = useState(false);
   const [metrics, setMetrics] = useState<VocalMetrics>({
     pitch: 0,
     pitchAccuracy: 0,
@@ -113,6 +114,7 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
         if (isQuotaError) {
           transcriptionDisabledRef.current = true;
           transcriptionDisabledReasonRef.current = 'OpenAI quota exceeded - continuing without transcription';
+          setIsTranscriptionDisabled(true);
 
           if (transcriptionIntervalRef.current) {
             clearInterval(transcriptionIntervalRef.current);
@@ -366,6 +368,20 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     });
   }, []);
 
+  // Retry transcription - resets disabled state and restarts interval
+  const retryTranscription = useCallback(() => {
+    transcriptionDisabledRef.current = false;
+    transcriptionDisabledReasonRef.current = null;
+    setIsTranscriptionDisabled(false);
+    
+    // Restart transcription interval if analysis is active and recorder exists
+    if (isActive && mediaRecorderRef.current && !transcriptionIntervalRef.current) {
+      transcriptionIntervalRef.current = setInterval(() => {
+        transcribeAudio();
+      }, 2000);
+    }
+  }, [isActive, transcribeAudio]);
+
   useEffect(() => {
     return () => {
       stopAnalysis();
@@ -377,8 +393,10 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     hasPermission,
     error,
     metrics,
+    isTranscriptionDisabled,
     startAnalysis,
     stopAnalysis,
     resetScores,
+    retryTranscription,
   };
 }
