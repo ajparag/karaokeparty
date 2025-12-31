@@ -345,6 +345,10 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     return frequency;
   }, []);
 
+  // Intermediate diction score based on voice activity (used between transcription updates)
+  const intermediateDictionRef = useRef<number>(0);
+  const lastVoiceActivityRef = useRef<number>(0);
+
   const calculateMetrics = useCallback((
     currentPitch: number,
     currentVolume: number,
@@ -356,6 +360,25 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       pitchHistoryRef.current.push(currentPitch);
       if (pitchHistoryRef.current.length > 50) {
         pitchHistoryRef.current.shift();
+      }
+      
+      // Track voice activity for intermediate diction scoring
+      lastVoiceActivityRef.current = now;
+      
+      // Gradually increase intermediate diction while singing (before transcription confirms)
+      if (intermediateDictionRef.current < lastDictionScoreRef.current) {
+        intermediateDictionRef.current = lastDictionScoreRef.current;
+      } else if (intermediateDictionRef.current < 70) {
+        // Slowly ramp up diction estimate while voice is detected
+        intermediateDictionRef.current = Math.min(70, intermediateDictionRef.current + 0.5);
+      }
+    } else {
+      // If no voice for 500ms, decay intermediate diction toward last confirmed score
+      if (now - lastVoiceActivityRef.current > 500) {
+        const target = lastDictionScoreRef.current;
+        if (intermediateDictionRef.current > target) {
+          intermediateDictionRef.current = Math.max(target, intermediateDictionRef.current - 1);
+        }
       }
     }
     
@@ -399,16 +422,19 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       rhythm = Math.min(100, rhythmScore * 1.2);
     }
 
+    // Use the higher of intermediate or confirmed diction for smoother updates
+    const effectiveDiction = Math.max(lastDictionScoreRef.current, Math.round(intermediateDictionRef.current));
+
     return {
       pitch: currentPitch,
       pitchAccuracy: isVoiceDetected ? pitchAccuracy : metrics.pitchAccuracy,
       rhythm,
-      diction: lastDictionScoreRef.current, // Use Whisper-based diction score
+      diction: effectiveDiction,
       volume: currentVolume,
       isVoiceDetected,
       transcribedText: lastTranscribedTextRef.current,
     };
-  }, [metrics.pitchAccuracy, metrics.transcribedText]);
+  }, [metrics.pitchAccuracy]);
 
   const startAnalysis = useCallback(async () => {
     try {
@@ -487,9 +513,9 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
             }
           };
 
-          // Request data every 2 seconds for backend processing
-          mediaRecorder.start(2000);
-          console.log('[mobile] MediaRecorder started');
+          // Request data every 500ms for faster backend processing
+          mediaRecorder.start(500);
+          console.log('[mobile] MediaRecorder started (500ms chunks)');
         } catch (recorderErr) {
           console.warn('[mobile] MediaRecorder not supported, transcription disabled:', recorderErr);
         }
@@ -534,12 +560,12 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
         mute.connect(audioContext.destination);
       }
 
-      // Transcribe every ~1 second (self-scheduling to avoid overlap)
-      console.log('[whisper] scheduling transcription loop (~1s)');
+      // Transcribe every ~500ms for faster diction updates (self-scheduling to avoid overlap)
+      console.log('[whisper] scheduling transcription loop (~500ms)');
       const loop = async () => {
         console.log('[whisper] interval tick');
         await transcribeAudio();
-        transcriptionIntervalRef.current = window.setTimeout(loop, 1000);
+        transcriptionIntervalRef.current = window.setTimeout(loop, 500);
       };
       transcriptionIntervalRef.current = window.setTimeout(loop, 0);
 
@@ -672,7 +698,7 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     if (isActive) {
       const loop = async () => {
         await transcribeAudio();
-        transcriptionIntervalRef.current = window.setTimeout(loop, 1000);
+        transcriptionIntervalRef.current = window.setTimeout(loop, 500);
       };
       transcriptionIntervalRef.current = window.setTimeout(loop, 0);
     }
