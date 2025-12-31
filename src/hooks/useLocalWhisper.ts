@@ -122,6 +122,7 @@ export function useLocalWhisper() {
           stride_length_s: 5,
           return_timestamps: false,
           language: 'hindi',
+          task: 'transcribe', // Output in Hindi (not translate to English)
         });
 
         return { text: result.text || '' };
