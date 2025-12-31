@@ -701,8 +701,8 @@ const Sing = () => {
                       />
                     )}
                     
-                    <span className={`relative z-10 text-base md:text-lg transition-colors ${
-                      isCurrent ? 'text-foreground font-medium' : 'text-muted-foreground'
+                    <span className={`relative z-10 text-lg md:text-2xl lg:text-3xl leading-tight transition-colors ${
+                      isCurrent ? 'text-foreground font-semibold' : 'text-muted-foreground'
                     }`}>
                       {line.text || '♪ ♪ ♪'}
                     </span>
