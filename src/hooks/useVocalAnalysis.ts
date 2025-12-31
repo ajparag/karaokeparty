@@ -354,14 +354,17 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     currentVolume: number,
     now: number
   ): VocalMetrics => {
-    const isVoiceDetected = currentVolume > 0.05 && currentPitch > 0;
-    
-    if (isVoiceDetected) {
+    const isVoiceDetected = currentVolume > 0.05;
+    const shouldUpdatePitch = isVoiceDetected && currentPitch > 0;
+
+    if (shouldUpdatePitch) {
       pitchHistoryRef.current.push(currentPitch);
       if (pitchHistoryRef.current.length > 50) {
         pitchHistoryRef.current.shift();
       }
-      
+    }
+    
+    if (isVoiceDetected) {
       // Track voice activity for intermediate diction scoring
       lastVoiceActivityRef.current = now;
       
@@ -427,7 +430,7 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
 
     return {
       pitch: currentPitch,
-      pitchAccuracy: isVoiceDetected ? pitchAccuracy : metrics.pitchAccuracy,
+      pitchAccuracy: shouldUpdatePitch ? pitchAccuracy : metrics.pitchAccuracy,
       rhythm,
       diction: effectiveDiction,
       volume: currentVolume,
