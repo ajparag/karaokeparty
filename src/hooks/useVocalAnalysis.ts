@@ -46,11 +46,15 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
   const analyserRef = useRef<AnalyserNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const animationFrameRef = useRef<number | null>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
-  const transcriptionIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  const transcriptionIntervalRef = useRef<number | null>(null);
   const lastDictionScoreRef = useRef<number>(0);
   const transcriptionDisabledRef = useRef(false);
+
+  // Raw PCM capture for Whisper (avoids webm decode issues)
+  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const pcmChunksRef = useRef<Float32Array[]>([]);
+  const inputSampleRateRef = useRef<number>(0);
   
   // Tracking for scoring
   const pitchHistoryRef = useRef<number[]>([]);
@@ -86,56 +90,63 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     return Math.round((matches / Math.max(words1.length, 1)) * 100);
   }, []);
 
+  const downsampleTo16k = useCallback((input: Float32Array, sampleRate: number) => {
+    if (sampleRate === 16000) return input;
+    const ratio = sampleRate / 16000;
+    const newLength = Math.floor(input.length / ratio);
+    const output = new Float32Array(newLength);
+    for (let i = 0; i < newLength; i++) {
+      output[i] = input[Math.floor(i * ratio)];
+    }
+    return output;
+  }, []);
+
   // Transcribe audio using local Whisper model (browser-based)
   const transcribeAudio = useCallback(async () => {
     if (transcriptionDisabledRef.current) return;
-    if (!isModelReady) {
-      console.log('Whisper model not ready yet, skipping transcription');
-      return;
-    }
-    if (audioChunksRef.current.length === 0) return;
+    if (!isModelReady) return;
+    if (pcmChunksRef.current.length === 0) return;
 
-    const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-    audioChunksRef.current = []; // Clear chunks for next batch
+    const sampleRate = inputSampleRateRef.current || 48000;
 
-    // Skip if too small (less than 1KB - likely silence)
-    if (audioBlob.size < 1000) {
-      console.log('Audio chunk too small, skipping transcription');
-      return;
+    const mergedLength = pcmChunksRef.current.reduce((sum, c) => sum + c.length, 0);
+    // Need ~0.75s minimum audio to be meaningful
+    if (mergedLength < sampleRate * 0.75) return;
+
+    const merged = new Float32Array(mergedLength);
+    let offset = 0;
+    for (const chunk of pcmChunksRef.current) {
+      merged.set(chunk, offset);
+      offset += chunk.length;
     }
+    pcmChunksRef.current = [];
+
+    const audio16k = downsampleTo16k(merged, sampleRate);
 
     try {
-      console.log('Transcribing audio chunk...', audioBlob.size, 'bytes');
-      const result = await transcribe(audioBlob);
+      const result = await transcribe(audio16k);
+      const transcribedText = result?.text?.trim() || '';
+      if (!transcribedText) return;
 
-      if (result?.text) {
-        const transcribedText = result.text.trim();
-        console.log('Transcribed:', transcribedText);
-
-        // Calculate diction score based on similarity to expected lyrics
-        let dictionScore = 0;
-        if (options.expectedLyrics) {
-          dictionScore = calculateSimilarity(transcribedText, options.expectedLyrics);
-        } else if (transcribedText.length > 0) {
-          // If no expected lyrics, give points for clear speech detection
-          // More words = clearer speech detected
-          const wordCount = transcribedText.split(/\s+/).filter(w => w.length > 0).length;
-          dictionScore = Math.min(85, 40 + wordCount * 8);
-        }
-
-        console.log('Diction score:', dictionScore);
-        lastDictionScoreRef.current = dictionScore;
-
-        setMetrics((prev) => ({
-          ...prev,
-          diction: dictionScore,
-          transcribedText,
-        }));
+      let dictionScore = 0;
+      if (options.expectedLyrics) {
+        dictionScore = calculateSimilarity(transcribedText, options.expectedLyrics);
+      } else {
+        const wordCount = transcribedText.split(/\s+/).filter(Boolean).length;
+        dictionScore = Math.min(85, 40 + wordCount * 8);
       }
+
+      lastDictionScoreRef.current = dictionScore;
+
+      setMetrics((prev) => ({
+        ...prev,
+        diction: dictionScore,
+        transcribedText,
+      }));
     } catch (err) {
       console.error('Failed to transcribe:', err);
     }
-  }, [isModelReady, transcribe, options.expectedLyrics, calculateSimilarity]);
+  }, [isModelReady, transcribe, options.expectedLyrics, calculateSimilarity, downsampleTo16k]);
 
   const detectPitch = useCallback((frequencyData: Uint8Array, sampleRate: number): number => {
     let maxIndex = 0;
@@ -243,25 +254,9 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       streamRef.current = stream;
       setHasPermission(true);
 
-      // Setup MediaRecorder for Whisper transcription
-      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-      mediaRecorderRef.current = mediaRecorder;
-      
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) {
-          audioChunksRef.current.push(e.data);
-        }
-      };
-      
-      mediaRecorder.start(1000); // Collect chunks every 1 second
-      
-      // Transcribe every 2 seconds (only if model is ready)
-      transcriptionIntervalRef.current = setInterval(() => {
-        transcribeAudio();
-      }, 2000);
-
       const audioContext = new AudioContext();
       audioContextRef.current = audioContext;
+      inputSampleRateRef.current = audioContext.sampleRate;
 
       const analyser = audioContext.createAnalyser();
       analyser.fftSize = 2048;
@@ -270,6 +265,34 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
 
       const source = audioContext.createMediaStreamSource(stream);
       source.connect(analyser);
+
+      // Capture raw PCM for Whisper (more reliable than MediaRecorder/webm decoding)
+      const processor = audioContext.createScriptProcessor(4096, 1, 1);
+      processorRef.current = processor;
+
+      processor.onaudioprocess = (e) => {
+        const input = e.inputBuffer.getChannelData(0);
+        pcmChunksRef.current.push(new Float32Array(input));
+
+        // Bound memory: keep up to ~30 seconds
+        const maxSamples = (inputSampleRateRef.current || audioContext.sampleRate) * 30;
+        let total = pcmChunksRef.current.reduce((sum, c) => sum + c.length, 0);
+        while (total > maxSamples && pcmChunksRef.current.length > 1) {
+          total -= pcmChunksRef.current[0].length;
+          pcmChunksRef.current.shift();
+        }
+      };
+
+      source.connect(processor);
+      const mute = audioContext.createGain();
+      mute.gain.value = 0;
+      processor.connect(mute);
+      mute.connect(audioContext.destination);
+
+      // Transcribe every 1 second
+      transcriptionIntervalRef.current = window.setInterval(() => {
+        transcribeAudio();
+      }, 1000);
 
       const frequencyData = new Uint8Array(analyser.frequencyBinCount);
       const timeData = new Uint8Array(analyser.frequencyBinCount);
@@ -312,13 +335,18 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     }
     
     if (transcriptionIntervalRef.current) {
-      clearInterval(transcriptionIntervalRef.current);
+      window.clearInterval(transcriptionIntervalRef.current);
       transcriptionIntervalRef.current = null;
     }
-    
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
-      mediaRecorderRef.current = null;
+
+    if (processorRef.current) {
+      try {
+        processorRef.current.disconnect();
+      } catch {
+        // ignore
+      }
+      processorRef.current.onaudioprocess = null as any;
+      processorRef.current = null;
     }
 
     if (streamRef.current) {
@@ -332,7 +360,7 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     }
 
     analyserRef.current = null;
-    audioChunksRef.current = [];
+    pcmChunksRef.current = [];
     setIsActive(false);
     
     pitchHistoryRef.current = [];
@@ -344,7 +372,7 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     pitchHistoryRef.current = [];
     volumeHistoryRef.current = [];
     beatTimesRef.current = [];
-    audioChunksRef.current = [];
+    pcmChunksRef.current = [];
     lastDictionScoreRef.current = 0;
     setMetrics({
       pitch: 0,
@@ -366,11 +394,10 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       await loadModel();
     }
     
-    // Restart transcription interval if analysis is active and recorder exists
-    if (isActive && mediaRecorderRef.current && !transcriptionIntervalRef.current) {
-      transcriptionIntervalRef.current = setInterval(() => {
+    if (isActive && !transcriptionIntervalRef.current) {
+      transcriptionIntervalRef.current = window.setInterval(() => {
         transcribeAudio();
-      }, 2000);
+      }, 1000);
     }
   }, [isActive, transcribeAudio, isModelReady, loadModel]);
 
