@@ -118,7 +118,7 @@ const Sing = () => {
     }
   }, [trackId, navigate, toast]);
 
-  // Initialize HTML5 Audio Player with proxy URL
+  // Initialize HTML5 Audio Player - use Saavn URL directly (no proxy needed)
   useEffect(() => {
     if (!track?.audioUrl) return;
 
@@ -128,19 +128,15 @@ const Sing = () => {
     const audio = new Audio();
     audioRef.current = audio;
     
-    // Use proxy URL directly as audio source (simpler, no blob)
-    const proxyUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/proxy-audio?url=${encodeURIComponent(track.audioUrl)}`;
-    audio.src = proxyUrl;
-    audio.crossOrigin = 'anonymous';
+    // Use Saavn audio URL directly - it supports CORS for playback
+    audio.src = track.audioUrl;
+    audio.preload = "auto";
     
     const onLoadedMetadata = () => {
       if (!isMounted) return;
       setDuration(audio.duration);
       setIsPlayerReady(true);
       setIsLoadingAudio(false);
-      
-      // Auto-start microphone
-      startAnalysis().catch(err => console.error('Mic start failed:', err));
     };
     
     const onTimeUpdate = () => {
@@ -194,7 +190,7 @@ const Sing = () => {
       audioRef.current = null;
       stopAnalysis();
     };
-  }, [track?.audioUrl, toast, startAnalysis, stopAnalysis]);
+  }, [track?.audioUrl, toast, stopAnalysis]);
 
   // Update volume/mute when changed
   useEffect(() => {
