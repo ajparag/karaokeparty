@@ -240,13 +240,16 @@
 /* Singing bar styling */
 .singing-bar {
   position: relative;
-  height: 48px;
+  height: auto;
+  min-height: 48px;
+  width: fit-content;
+  max-width: 100%;
   background: hsl(var(--bar-background));
   border-radius: 8px;
   overflow: hidden;
   display: flex;
   align-items: center;
-  padding: 0 16px;
+  padding: 8px 20px;
 }
 
 .singing-bar-progress {
