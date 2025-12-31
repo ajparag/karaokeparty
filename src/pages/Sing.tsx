@@ -114,7 +114,7 @@ const Sing = () => {
         fetchLyrics(parsed.title, parsed.artist);
       }
     } else {
-      navigate('/search');
+      navigate('/');
     }
   }, [trackId, navigate, toast]);
 
@@ -390,7 +390,7 @@ const Sing = () => {
     <div className="min-h-screen bg-background flex flex-col">
       {/* Header */}
       <header className="glass border-b border-border p-4 flex items-center gap-4 shrink-0">
-        <Button variant="ghost" size="icon" onClick={() => navigate('/search')}>
+        <Button variant="ghost" size="icon" onClick={() => navigate('/')}>
           <ArrowLeft className="w-5 h-5" />
         </Button>
         <div className="flex-1 min-w-0">
