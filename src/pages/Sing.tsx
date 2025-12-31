@@ -665,7 +665,7 @@ const Sing = () => {
             <p className="text-muted-foreground">Loading audio...</p>
           </div>
         ) : (
-          <div className="w-full max-w-4xl space-y-3">
+          <div className="w-full max-w-4xl space-y-3 flex flex-col items-center">
             {lyrics.length === 0 ? (
               <div className="text-center py-12">
                 <div className="animate-shimmer h-12 rounded-lg mb-3" />
