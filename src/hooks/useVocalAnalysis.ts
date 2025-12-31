@@ -297,6 +297,11 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
   const startAnalysis = useCallback(async () => {
     try {
       setError(null);
+
+      // Reset last transcription so old (possibly English) text doesn't linger in UI
+      lastTranscribedTextRef.current = '';
+      lastDictionScoreRef.current = 0;
+      setMetrics((prev) => ({ ...prev, diction: 0, transcribedText: '' }));
       
       // Load Whisper model if not already loaded
       if (!isModelReady) {
@@ -375,12 +380,14 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       processor.connect(mute);
       mute.connect(audioContext.destination);
 
-      // Transcribe every 1 second
-      console.log('[whisper] scheduling transcription interval (1s)');
-      transcriptionIntervalRef.current = window.setInterval(() => {
+      // Transcribe every ~1 second (self-scheduling to avoid overlap)
+      console.log('[whisper] scheduling transcription loop (~1s)');
+      const loop = async () => {
         console.log('[whisper] interval tick');
-        transcribeAudio();
-      }, 1000);
+        await transcribeAudio();
+        transcriptionIntervalRef.current = window.setTimeout(loop, 1000);
+      };
+      transcriptionIntervalRef.current = window.setTimeout(loop, 0);
 
       const frequencyData = new Uint8Array(analyser.frequencyBinCount);
       const timeData = new Uint8Array(analyser.frequencyBinCount);
@@ -423,7 +430,7 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     }
     
     if (transcriptionIntervalRef.current) {
-      window.clearInterval(transcriptionIntervalRef.current);
+      window.clearTimeout(transcriptionIntervalRef.current);
       transcriptionIntervalRef.current = null;
     }
 
