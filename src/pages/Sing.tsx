@@ -76,41 +76,25 @@ const Sing = () => {
   const [selectedLyricsId, setSelectedLyricsId] = useState<string>("");
   
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const timeSyncRafRef = useRef<number | null>(null);
   const scoreAccumulatorRef = useRef({ pitch: 0, rhythm: 0, diction: 0, count: 0 });
+  const lastScoreSampleAtRef = useRef(0);
 
-  const { 
-    isActive: isMicActive, 
-    metrics, 
+  // Weights (must sum to 1.0)
+  const SCORE_WEIGHTS = useRef({ pitch: 0.5, diction: 0.3, rhythm: 0.2 }).current;
+
+  const {
+    isActive: isMicActive,
+    metrics,
     isTranscriptionDisabled,
     isModelLoading,
     loadProgress,
     isModelReady,
-    startAnalysis, 
+    startAnalysis,
     stopAnalysis,
     resetScores,
     retryTranscription,
-  } = useVocalAnalysis({
-    onMetricsUpdate: (m) => {
-      // Always update score when playing, even without voice detection
-      // This allows diction scores from Whisper to contribute
-      if (isPlaying) {
-        if (m.isVoiceDetected || m.diction > 0) {
-          scoreAccumulatorRef.current.pitch += m.pitchAccuracy;
-          scoreAccumulatorRef.current.rhythm += m.rhythm;
-          scoreAccumulatorRef.current.diction += m.diction;
-          scoreAccumulatorRef.current.count += 1;
-        }
-        
-        if (scoreAccumulatorRef.current.count > 0) {
-          const avgPitch = scoreAccumulatorRef.current.pitch / scoreAccumulatorRef.current.count;
-          const avgRhythm = scoreAccumulatorRef.current.rhythm / scoreAccumulatorRef.current.count;
-          const avgDiction = scoreAccumulatorRef.current.diction / scoreAccumulatorRef.current.count;
-          const combined = (avgPitch * 0.4 + avgRhythm * 0.35 + avgDiction * 0.25);
-          setTotalScore(Math.round(combined * 10));
-        }
-      }
-    }
-  });
+  } = useVocalAnalysis();
 
   // Load track and pre-fetched lyrics from session storage
   useEffect(() => {
@@ -148,40 +132,62 @@ const Sing = () => {
 
     let isMounted = true;
     setIsLoadingAudio(true);
-    
+
     const audio = new Audio();
     audioRef.current = audio;
-    
+
+    const stopTimeSync = () => {
+      if (timeSyncRafRef.current != null) {
+        cancelAnimationFrame(timeSyncRafRef.current);
+        timeSyncRafRef.current = null;
+      }
+    };
+
+    const startTimeSync = () => {
+      if (timeSyncRafRef.current != null) return;
+      const tick = () => {
+        if (!isMounted || !audioRef.current) return;
+        setCurrentTime(audioRef.current.currentTime);
+        timeSyncRafRef.current = requestAnimationFrame(tick);
+      };
+      timeSyncRafRef.current = requestAnimationFrame(tick);
+    };
+
     // Use Saavn audio URL directly - it supports CORS for playback
     audio.src = track.audioUrl;
     audio.preload = "auto";
-    
+
     const onLoadedMetadata = () => {
       if (!isMounted) return;
       setDuration(audio.duration);
       setIsPlayerReady(true);
       setIsLoadingAudio(false);
     };
-    
+
     const onTimeUpdate = () => {
       if (isMounted) setCurrentTime(audio.currentTime);
     };
-    
+
     const onPlay = () => {
-      if (isMounted) setIsPlaying(true);
+      if (!isMounted) return;
+      setIsPlaying(true);
+      startTimeSync();
     };
-    
+
     const onPause = () => {
-      if (isMounted) setIsPlaying(false);
+      if (!isMounted) return;
+      setIsPlaying(false);
+      stopTimeSync();
     };
-    
+
     const onEnded = () => {
       if (isMounted) {
         setIsPlaying(false);
+        stopTimeSync();
         setShowResults(true);
       }
     };
-    
+
     const onError = () => {
       console.error('Audio error:', audio.error);
       if (isMounted) {
@@ -193,7 +199,7 @@ const Sing = () => {
         });
       }
     };
-    
+
     audio.addEventListener('loadedmetadata', onLoadedMetadata);
     audio.addEventListener('timeupdate', onTimeUpdate);
     audio.addEventListener('play', onPlay);
@@ -203,6 +209,7 @@ const Sing = () => {
 
     return () => {
       isMounted = false;
+      stopTimeSync();
       audio.removeEventListener('loadedmetadata', onLoadedMetadata);
       audio.removeEventListener('timeupdate', onTimeUpdate);
       audio.removeEventListener('play', onPlay);
@@ -223,6 +230,37 @@ const Sing = () => {
       audioRef.current.muted = isMuted;
     }
   }, [volume, isMuted]);
+
+  // Accumulate score from live metrics while audio is playing.
+  // NOTE: This lives outside the mic hook so it always sees the latest `isPlaying` state.
+  useEffect(() => {
+    if (!isPlaying) return;
+
+    // Sample at ~5Hz to keep updates smooth but not overly chatty.
+    const now = performance.now();
+    if (now - lastScoreSampleAtRef.current < 200) return;
+    lastScoreSampleAtRef.current = now;
+
+    if (metrics.isVoiceDetected || metrics.diction > 0) {
+      scoreAccumulatorRef.current.pitch += metrics.pitchAccuracy;
+      scoreAccumulatorRef.current.rhythm += metrics.rhythm;
+      scoreAccumulatorRef.current.diction += metrics.diction;
+      scoreAccumulatorRef.current.count += 1;
+    }
+
+    if (scoreAccumulatorRef.current.count > 0) {
+      const avgPitch = scoreAccumulatorRef.current.pitch / scoreAccumulatorRef.current.count;
+      const avgRhythm = scoreAccumulatorRef.current.rhythm / scoreAccumulatorRef.current.count;
+      const avgDiction = scoreAccumulatorRef.current.diction / scoreAccumulatorRef.current.count;
+
+      const combined =
+        avgPitch * SCORE_WEIGHTS.pitch +
+        avgDiction * SCORE_WEIGHTS.diction +
+        avgRhythm * SCORE_WEIGHTS.rhythm;
+
+      setTotalScore(Math.round(combined * 10));
+    }
+  }, [isPlaying, metrics, SCORE_WEIGHTS]);
 
   const fetchLyrics = async (title: string, artist: string) => {
     try {
@@ -387,6 +425,7 @@ const Sing = () => {
     setCurrentTime(0);
     setTotalScore(0);
     scoreAccumulatorRef.current = { pitch: 0, rhythm: 0, diction: 0, count: 0 };
+    lastScoreSampleAtRef.current = 0;
     resetScores();
     setShowResults(false);
     if (audioRef.current) {
@@ -678,9 +717,20 @@ const Sing = () => {
                 const actualIndex = Math.max(0, currentLineIndex - 1) + i;
                 const isCurrent = actualIndex === currentLineIndex;
                 const isPast = actualIndex < currentLineIndex;
-                const lineProgress = isCurrent && line.duration 
-                  ? Math.min(100, ((currentTime - line.time) / line.duration) * 100) 
-                  : isPast ? 100 : 0;
+
+                const nextLine = lyrics[actualIndex + 1];
+                const effectiveDuration =
+                  line.duration && line.duration > 0
+                    ? line.duration
+                    : nextLine
+                      ? Math.max(0.25, nextLine.time - line.time)
+                      : Math.max(0.25, duration - line.time);
+
+                const lineProgress = isCurrent
+                  ? Math.min(100, Math.max(0, ((currentTime - line.time) / effectiveDuration) * 100))
+                  : isPast
+                    ? 100
+                    : 0;
                 
                 // Split text into words for per-word highlighting
                 const words = (line.text || '♪ ♪ ♪').split(/\s+/);
@@ -741,7 +791,7 @@ const Sing = () => {
                             {/* Underline progress indicator */}
                             {isCurrent && (
                               <span 
-                                className="absolute bottom-0 left-0 h-0.5 bg-primary rounded-full transition-all duration-75"
+                                className="absolute bottom-0 left-0 h-0.5 bg-primary rounded-full transition-[width] duration-50 ease-linear"
                                 style={{ width: `${wordProgress}%` }}
                               />
                             )}
@@ -783,7 +833,7 @@ const Sing = () => {
           <div className="mb-3 p-2 bg-muted/30 rounded-lg border border-border/30">
             <p className="text-xs text-muted-foreground text-center">
               <span className="font-medium text-foreground">Scoring Weights:</span>{' '}
-              Pitch <span className="text-primary">40%</span> • Rhythm <span className="text-primary">35%</span> • Diction <span className="text-primary">25%</span>
+              Pitch <span className="text-primary">50%</span> • Diction <span className="text-primary">30%</span> • Rhythm <span className="text-primary">20%</span>
             </p>
           </div>
           
@@ -795,15 +845,7 @@ const Sing = () => {
               color={getScoreColor(metrics.pitchAccuracy)}
               isActive={metrics.isVoiceDetected}
               hint="Variance < 20% = good"
-              weight="40%"
-            />
-            <ScoreItem 
-              label="Rhythm" 
-              value={metrics.rhythm} 
-              color={getScoreColor(metrics.rhythm)}
-              isActive={metrics.isVoiceDetected}
-              hint="Beat consistency"
-              weight="35%"
+              weight="50%"
             />
             <ScoreItem 
               label={isModelLoading ? `Diction (${loadProgress}%)` : "Diction"} 
@@ -813,12 +855,18 @@ const Sing = () => {
               disabled={isTranscriptionDisabled || isModelLoading}
               onRetry={retryTranscription}
               hint="Word match %"
-              weight="25%"
+              weight="30%"
+            />
+            <ScoreItem 
+              label="Rhythm" 
+              value={metrics.rhythm} 
+              color={getScoreColor(metrics.rhythm)}
+              isActive={metrics.isVoiceDetected}
+              hint="Beat consistency"
+              weight="20%"
             />
             <div className="text-center">
-              <p className={`text-2xl md:text-3xl font-bold ${rating.color}`}>
-                {totalScore}
-              </p>
+              <p className={`text-2xl md:text-3xl font-bold ${rating.color}`}>{totalScore}</p>
               <p className="text-xs text-muted-foreground">Score</p>
             </div>
           </div>
