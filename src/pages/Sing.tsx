@@ -12,7 +12,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { ArrowLeft, Play, Pause, Mic, MicOff, RotateCcw, Save, Volume2, VolumeX, Edit2, Search } from "lucide-react";
+import { ArrowLeft, Play, Pause, Mic, MicOff, RotateCcw, Save, Volume2, VolumeX, Edit2, Search, RefreshCw } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useVocalAnalysis } from "@/hooks/useVocalAnalysis";
@@ -68,9 +68,11 @@ const Sing = () => {
   const { 
     isActive: isMicActive, 
     metrics, 
+    isTranscriptionDisabled,
     startAnalysis, 
     stopAnalysis,
-    resetScores 
+    resetScores,
+    retryTranscription,
   } = useVocalAnalysis({
     onMetricsUpdate: (m) => {
       if (m.isVoiceDetected && isPlaying) {
@@ -617,6 +619,8 @@ const Sing = () => {
               value={metrics.diction} 
               color={getScoreColor(metrics.diction)}
               isActive={metrics.isVoiceDetected}
+              disabled={isTranscriptionDisabled}
+              onRetry={retryTranscription}
             />
             <div className="text-center">
               <p className={`text-2xl md:text-3xl font-bold ${rating.color}`}>
@@ -672,19 +676,32 @@ interface ScoreItemProps {
   value: number;
   color: string;
   isActive: boolean;
+  disabled?: boolean;
+  onRetry?: () => void;
 }
 
-const ScoreItem = ({ label, value, color, isActive }: ScoreItemProps) => (
-  <div className="text-center">
+const ScoreItem = ({ label, value, color, isActive, disabled, onRetry }: ScoreItemProps) => (
+  <div className="text-center relative">
     <div className="h-2 bg-muted rounded-full overflow-hidden mb-2">
       <div 
-        className={`h-full transition-all duration-200 ${color}`} 
+        className={`h-full transition-all duration-200 ${disabled ? 'bg-muted-foreground/30' : color}`} 
         style={{ width: `${value}%` }} 
       />
     </div>
-    <p className={`text-sm font-medium transition-all ${isActive ? 'scale-110' : ''}`}>
-      {Math.round(value)}%
-    </p>
+    {disabled ? (
+      <button 
+        onClick={onRetry}
+        className="text-xs text-amber-500 hover:text-amber-400 flex items-center justify-center gap-1 mx-auto transition-colors"
+        title="Retry diction scoring"
+      >
+        <RefreshCw className="w-3 h-3" />
+        <span>Retry</span>
+      </button>
+    ) : (
+      <p className={`text-sm font-medium transition-all ${isActive ? 'scale-110' : ''}`}>
+        {Math.round(value)}%
+      </p>
+    )}
     <p className="text-xs text-muted-foreground">{label}</p>
   </div>
 );
