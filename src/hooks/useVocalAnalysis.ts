@@ -97,9 +97,12 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
         body: { audio: base64Audio },
       });
 
-      // Check for quota/rate limit errors - either from error object or from data containing error
-      const errorMessage = response.error?.message || response.data?.error || '';
-      const isQuotaError = 
+      // Check for quota/rate limit errors - either from error object, or from the function returning an error payload
+      const providerStatus = (response.data as any)?.provider_status;
+      const errorMessage = response.error?.message || (response.data as any)?.error || '';
+      const isQuotaError =
+        providerStatus === 429 ||
+        providerStatus === 402 ||
         errorMessage.toLowerCase().includes('quota') ||
         errorMessage.toLowerCase().includes('exceeded') ||
         errorMessage.includes('429') ||

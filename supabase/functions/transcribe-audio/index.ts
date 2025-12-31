@@ -74,7 +74,9 @@ serve(async (req) => {
       body: formData,
     });
 
-    // IMPORTANT: forward upstream status (429/402/etc.) instead of always returning 500
+    // IMPORTANT: avoid returning 402/429 from this function because it can surface as a runtime error
+    // in some environments; instead return 200 with an error payload so the app can gracefully disable
+    // transcription while continuing the karaoke session.
     if (!response.ok) {
       const errorText = await response.text();
       console.error("OpenAI API error:", response.status, errorText);
@@ -88,6 +90,18 @@ serve(async (req) => {
         // ignore non-JSON error bodies
       }
 
+      // Quota/rate-limit: return 200 with a structured error so the frontend can disable transcription
+      if (response.status === 402 || response.status === 429) {
+        return new Response(JSON.stringify({
+          error: message,
+          provider_status: response.status,
+        }), {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      // Other upstream errors: forward status
       return new Response(JSON.stringify({ error: message }), {
         status: response.status,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
