@@ -376,15 +376,8 @@ const Sing = () => {
       return;
     }
 
-    // Start mic on first user interaction (keeps mic "default on" without breaking autoplay policies)
-    if (!isMicActive) {
-      try {
-        await startAnalysis();
-      } catch (err) {
-        console.warn("Microphone permission denied/unavailable:", err);
-      }
-    }
-
+    // CRITICAL: Start audio playback FIRST in the user gesture for mobile compatibility
+    // Mobile browsers require play() to be called directly in the user interaction handler
     try {
       await audio.play();
     } catch (error) {
@@ -400,6 +393,15 @@ const Sing = () => {
               ? "Tap Play again (browser requires a direct user action)."
               : "Unable to start playback. Try another song.",
         variant: "destructive",
+      });
+      return; // Don't start mic if audio failed
+    }
+
+    // Start mic AFTER audio playback has begun (non-blocking for the user)
+    // The Whisper model loads in background without blocking playback
+    if (!isMicActive) {
+      startAnalysis().catch((err) => {
+        console.warn("Microphone permission denied/unavailable:", err);
       });
     }
   }, [isPlaying, isPlayerReady, isMicActive, startAnalysis, toast]);
