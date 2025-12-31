@@ -313,15 +313,17 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       lastDictionScoreRef.current = 0;
       setMetrics((prev) => ({ ...prev, diction: 0, transcribedText: '' }));
       
-      // Load Whisper model and wait for it to be ready
-      console.log('[whisper] loadModel(): starting (diction scoring)');
-      const modelLoaded = await loadModel();
-      console.log('[whisper] loadModel(): done', { modelLoaded, checkReady: checkModelReady() });
-      
-      if (!modelLoaded) {
-        console.error('[whisper] Model failed to load - transcription will not work');
-        setError('Failed to load speech recognition model');
-      }
+      // Load Whisper model in BACKGROUND - don't block mic/audio playback
+      // This allows playback to start immediately while the model downloads
+      console.log('[whisper] loadModel(): starting in background (non-blocking)');
+      loadModel().then((modelLoaded) => {
+        console.log('[whisper] loadModel(): done', { modelLoaded, checkReady: checkModelReady() });
+        if (!modelLoaded) {
+          console.warn('[whisper] Model failed to load - transcription/diction scoring disabled');
+        }
+      }).catch((err) => {
+        console.error('[whisper] Model load error:', err);
+      });
       
       console.log('[mic] requesting getUserMedia...');
       const stream = await navigator.mediaDevices.getUserMedia({
