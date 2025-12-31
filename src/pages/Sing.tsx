@@ -82,6 +82,9 @@ const Sing = () => {
     isActive: isMicActive, 
     metrics, 
     isTranscriptionDisabled,
+    isModelLoading,
+    loadProgress,
+    isModelReady,
     startAnalysis, 
     stopAnalysis,
     resetScores,
@@ -729,11 +732,11 @@ const Sing = () => {
               isActive={metrics.isVoiceDetected}
             />
             <ScoreItem 
-              label="Diction" 
+              label={isModelLoading ? `Diction (${loadProgress}%)` : "Diction"} 
               value={metrics.diction} 
               color={getScoreColor(metrics.diction)}
               isActive={metrics.isVoiceDetected}
-              disabled={isTranscriptionDisabled}
+              disabled={isTranscriptionDisabled || isModelLoading}
               onRetry={retryTranscription}
             />
             <div className="text-center">

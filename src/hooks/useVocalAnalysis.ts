@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { supabase } from '@/integrations/supabase/client';
+import { useLocalWhisper } from './useLocalWhisper';
 
 interface VocalMetrics {
   pitch: number;           // Current detected pitch in Hz
@@ -22,6 +22,7 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
   const [hasPermission, setHasPermission] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isTranscriptionDisabled, setIsTranscriptionDisabled] = useState(false);
+  const [isModelLoading, setIsModelLoading] = useState(false);
   const [metrics, setMetrics] = useState<VocalMetrics>({
     pitch: 0,
     pitchAccuracy: 0,
@@ -30,6 +31,16 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     volume: 0,
     isVoiceDetected: false,
   });
+
+  // Local Whisper hook for browser-based transcription
+  const { 
+    isModelReady, 
+    isModelLoading: whisperLoading, 
+    loadProgress,
+    loadModel, 
+    transcribe, 
+    dispose 
+  } = useLocalWhisper();
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -40,13 +51,17 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
   const transcriptionIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastDictionScoreRef = useRef<number>(0);
   const transcriptionDisabledRef = useRef(false);
-  const transcriptionDisabledReasonRef = useRef<string | null>(null);
   
   // Tracking for scoring
   const pitchHistoryRef = useRef<number[]>([]);
   const volumeHistoryRef = useRef<number[]>([]);
   const beatTimesRef = useRef<number[]>([]);
   const lastBeatTimeRef = useRef<number>(0);
+
+  // Update loading state from whisper hook
+  useEffect(() => {
+    setIsModelLoading(whisperLoading);
+  }, [whisperLoading]);
 
   // Calculate similarity between two strings (Levenshtein-based)
   const calculateSimilarity = useCallback((str1: string, str2: string): number => {
@@ -71,9 +86,10 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     return Math.round((matches / Math.max(words1.length, 1)) * 100);
   }, []);
 
-  // Send audio to Whisper API for transcription
+  // Transcribe audio using local Whisper model (browser-based)
   const transcribeAudio = useCallback(async () => {
     if (transcriptionDisabledRef.current) return;
+    if (!isModelReady) return;
     if (audioChunksRef.current.length === 0) return;
 
     const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
@@ -83,55 +99,10 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     if (audioBlob.size < 1000) return;
 
     try {
-      // Convert blob to base64
-      const reader = new FileReader();
-      const base64Promise = new Promise<string>((resolve) => {
-        reader.onloadend = () => {
-          const base64 = (reader.result as string).split(',')[1];
-          resolve(base64);
-        };
-      });
-      reader.readAsDataURL(audioBlob);
-      const base64Audio = await base64Promise;
+      const result = await transcribe(audioBlob);
 
-      const response = await supabase.functions.invoke('transcribe-audio', {
-        body: { audio: base64Audio },
-      });
-
-      // Check for quota/rate limit errors - either from error object, or from the function returning an error payload
-      const providerStatus = (response.data as any)?.provider_status;
-      const errorMessage = response.error?.message || (response.data as any)?.error || '';
-      const isQuotaError =
-        providerStatus === 429 ||
-        providerStatus === 402 ||
-        errorMessage.toLowerCase().includes('quota') ||
-        errorMessage.toLowerCase().includes('exceeded') ||
-        errorMessage.includes('429') ||
-        errorMessage.includes('402');
-
-      if (response.error || isQuotaError) {
-        // Disable transcription on quota/rate limit errors
-        if (isQuotaError) {
-          transcriptionDisabledRef.current = true;
-          transcriptionDisabledReasonRef.current = 'OpenAI quota exceeded - continuing without transcription';
-          setIsTranscriptionDisabled(true);
-
-          if (transcriptionIntervalRef.current) {
-            clearInterval(transcriptionIntervalRef.current);
-            transcriptionIntervalRef.current = null;
-          }
-
-          console.warn('Disabling transcription: OpenAI quota exceeded. Continuing without diction scoring.');
-        } else {
-          console.error('Transcription error:', response.error);
-        }
-        return;
-      }
-
-      const data = response.data;
-
-      if (data?.text) {
-        const transcribedText = data.text;
+      if (result?.text) {
+        const transcribedText = result.text.trim();
 
         // Calculate diction score based on similarity to expected lyrics
         let dictionScore = 0;
@@ -153,7 +124,7 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     } catch (err) {
       console.error('Failed to transcribe:', err);
     }
-  }, [options.expectedLyrics, calculateSimilarity]);
+  }, [isModelReady, transcribe, options.expectedLyrics, calculateSimilarity]);
 
   const detectPitch = useCallback((frequencyData: Uint8Array, sampleRate: number): number => {
     let maxIndex = 0;
@@ -244,6 +215,12 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     try {
       setError(null);
       
+      // Load Whisper model if not already loaded
+      if (!isModelReady) {
+        console.log('Loading Whisper model for diction scoring...');
+        await loadModel();
+      }
+      
       const stream = await navigator.mediaDevices.getUserMedia({ 
         audio: {
           echoCancellation: true,
@@ -267,7 +244,7 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       
       mediaRecorder.start(1000); // Collect chunks every 1 second
       
-      // Transcribe every 2 seconds
+      // Transcribe every 2 seconds (only if model is ready)
       transcriptionIntervalRef.current = setInterval(() => {
         transcribeAudio();
       }, 2000);
@@ -315,7 +292,7 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       setError('Microphone access denied');
       setHasPermission(false);
     }
-  }, [detectPitch, calculateMetrics, options, transcribeAudio]);
+  }, [detectPitch, calculateMetrics, options, transcribeAudio, isModelReady, loadModel]);
 
   const stopAnalysis = useCallback(() => {
     if (animationFrameRef.current) {
@@ -369,10 +346,14 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
   }, []);
 
   // Retry transcription - resets disabled state and restarts interval
-  const retryTranscription = useCallback(() => {
+  const retryTranscription = useCallback(async () => {
     transcriptionDisabledRef.current = false;
-    transcriptionDisabledReasonRef.current = null;
     setIsTranscriptionDisabled(false);
+    
+    // Load model if not ready
+    if (!isModelReady) {
+      await loadModel();
+    }
     
     // Restart transcription interval if analysis is active and recorder exists
     if (isActive && mediaRecorderRef.current && !transcriptionIntervalRef.current) {
@@ -380,7 +361,7 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
         transcribeAudio();
       }, 2000);
     }
-  }, [isActive, transcribeAudio]);
+  }, [isActive, transcribeAudio, isModelReady, loadModel]);
 
   useEffect(() => {
     return () => {
@@ -394,6 +375,9 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     error,
     metrics,
     isTranscriptionDisabled,
+    isModelLoading,
+    loadProgress,
+    isModelReady,
     startAnalysis,
     stopAnalysis,
     resetScores,
