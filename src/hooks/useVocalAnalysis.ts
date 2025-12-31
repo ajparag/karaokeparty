@@ -39,7 +39,8 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     loadProgress,
     loadModel, 
     transcribe, 
-    dispose 
+    dispose,
+    checkModelReady,
   } = useLocalWhisper();
 
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -116,8 +117,8 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       console.log('[whisper] skip: transcriptionDisabledRef=true');
       return;
     }
-    if (!isModelReady) {
-      console.log('[whisper] skip: model not ready');
+    if (!checkModelReady()) {
+      console.log('[whisper] skip: model not ready (ref check)');
       return;
     }
     if (pcmChunksRef.current.length === 0) {
@@ -190,7 +191,7 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     } catch (err) {
       console.error('[whisper] transcribe failed:', err);
     }
-  }, [isModelReady, transcribe, options.expectedLyrics, calculateSimilarity, downsampleTo16k]);
+  }, [checkModelReady, transcribe, options.expectedLyrics, calculateSimilarity, downsampleTo16k]);
 
   const detectPitch = useCallback((frequencyData: Uint8Array, sampleRate: number): number => {
     let maxIndex = 0;
