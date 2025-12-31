@@ -702,10 +702,9 @@ const Sing = () => {
                     )}
                     
                     <span 
-                      className={`relative z-10 text-lg md:text-2xl lg:text-3xl leading-tight transition-colors tracking-wide ${
+                      className={`relative z-10 text-base md:text-lg lg:text-xl leading-snug transition-colors tracking-normal ${
                         isCurrent ? 'text-foreground font-semibold' : 'text-muted-foreground'
                       }`}
-                      style={{ wordSpacing: '0.3em' }}
                     >
                       {line.text || '♪ ♪ ♪'}
                     </span>
