@@ -1,74 +1,102 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, range",
+  "Access-Control-Expose-Headers": "Content-Length, Content-Range, Accept-Ranges",
 };
+
+function inferContentType(url: string, fallback: string | null) {
+  const ct = (fallback || "").toLowerCase();
+  if (ct && ct !== "application/octet-stream") return fallback!;
+
+  const lower = url.toLowerCase();
+  if (lower.endsWith(".mp4") || lower.endsWith(".m4a")) return "audio/mp4";
+  if (lower.endsWith(".mp3")) return "audio/mpeg";
+  return fallback || "application/octet-stream";
+}
 
 serve(async (req) => {
   // Handle CORS preflight
-  if (req.method === 'OPTIONS') {
+  if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    // Support both GET (query param) and POST (body)
     let audioUrl: string | null = null;
-    
-    if (req.method === 'GET') {
+
+    if (req.method === "GET") {
       const url = new URL(req.url);
-      audioUrl = url.searchParams.get('url');
-    } else {
+      audioUrl = url.searchParams.get("url");
+    } else if (req.method === "POST") {
       const body = await req.json();
-      audioUrl = body.url;
+      audioUrl = body?.url;
     }
-    
-    if (!audioUrl || typeof audioUrl !== 'string') {
+
+    if (!audioUrl || typeof audioUrl !== "string") {
+      return new Response(JSON.stringify({ error: "Audio URL is required" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const range = req.headers.get("range");
+    console.log("Proxying audio:", { url: audioUrl, range });
+
+    // Forward range header to support streaming + seeking
+    const upstreamHeaders: Record<string, string> = {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      Accept: "audio/*,*/*",
+      Referer: "https://www.jiosaavn.com/",
+    };
+
+    if (range) upstreamHeaders.Range = range;
+
+    const upstream = await fetch(audioUrl, { headers: upstreamHeaders });
+
+    if (!upstream.ok) {
+      console.error("Upstream audio fetch failed:", upstream.status, upstream.statusText);
       return new Response(
-        JSON.stringify({ error: 'Audio URL is required' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({ error: `Failed to fetch audio: ${upstream.status}` }),
+        {
+          status: upstream.status,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
       );
     }
 
-    console.log('Proxying audio from:', audioUrl);
-
-    // Fetch the audio from the source
-    const response = await fetch(audioUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'audio/*,*/*',
-      },
-    });
-
-    if (!response.ok) {
-      console.error('Failed to fetch audio:', response.status, response.statusText);
-      return new Response(
-        JSON.stringify({ error: `Failed to fetch audio: ${response.status}` }),
-        { status: response.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    const contentType = response.headers.get('content-type') || 'audio/mpeg';
-    const contentLength = response.headers.get('content-length');
-
-    console.log('Audio fetched, type:', contentType, 'length:', contentLength);
+    const contentType = inferContentType(audioUrl, upstream.headers.get("content-type"));
 
     const headers: Record<string, string> = {
       ...corsHeaders,
-      'Content-Type': contentType,
-      'Cache-Control': 'public, max-age=3600',
+      "Content-Type": contentType,
+      "Cache-Control": "public, max-age=3600",
     };
 
-    if (contentLength) {
-      headers['Content-Length'] = contentLength;
+    // Pass through key streaming headers
+    const passThrough = [
+      "content-length",
+      "content-range",
+      "accept-ranges",
+      "etag",
+      "last-modified",
+    ];
+
+    for (const h of passThrough) {
+      const v = upstream.headers.get(h);
+      if (v) headers[h.split("-").map((p) => p[0].toUpperCase() + p.slice(1)).join("-")] = v;
     }
 
-    return new Response(response.body, { headers });
+    return new Response(upstream.body, {
+      status: upstream.status, // 200 or 206 for range
+      headers,
+    });
   } catch (error) {
-    console.error('Proxy error:', error);
+    console.error("Proxy error:", error);
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Proxy failed' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      JSON.stringify({ error: error instanceof Error ? error.message : "Proxy failed" }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
 });

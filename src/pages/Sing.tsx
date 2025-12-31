@@ -275,17 +275,33 @@ const Sing = () => {
       return;
     }
 
+    // Start mic on first user interaction (keeps mic "default on" without breaking autoplay policies)
+    if (!isMicActive) {
+      try {
+        await startAnalysis();
+      } catch (err) {
+        console.warn("Microphone permission denied/unavailable:", err);
+      }
+    }
+
     try {
       await audio.play();
     } catch (error) {
-      console.error('Audio play() failed:', error);
+      console.error("Audio play() failed:", error);
+      const name = (error as any)?.name;
+
       toast({
-        title: "Playback blocked",
-        description: "Your browser blocked audio playback. Try tapping Play again.",
+        title: name === "NotAllowedError" ? "Playback blocked" : "Playback failed",
+        description:
+          name === "NotSupportedError"
+            ? "This track format isn't supported by your browser."
+            : name === "NotAllowedError"
+              ? "Tap Play again (browser requires a direct user action)."
+              : "Unable to start playback. Try another song.",
         variant: "destructive",
       });
     }
-  }, [isPlaying, isPlayerReady, toast]);
+  }, [isPlaying, isPlayerReady, isMicActive, startAnalysis, toast]);
 
   const toggleMic = useCallback(async () => {
     if (isMicActive) {
