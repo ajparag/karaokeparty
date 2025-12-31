@@ -121,8 +121,13 @@ export function useLocalWhisper() {
           chunk_length_s: 30,
           stride_length_s: 5,
           return_timestamps: false,
-          language: 'hindi',
-          task: 'transcribe', // Output in Hindi (not translate to English)
+          // Force Hindi transcription (Devanagari), not translation
+          task: 'transcribe',
+          language: 'hi',
+          generate_kwargs: {
+            task: 'transcribe',
+            language: 'hi',
+          },
         });
 
         return { text: result.text || '' };
