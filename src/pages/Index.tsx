@@ -11,6 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Mic, Music, Trophy, Sparkles, Loader2, Play, Search, Edit2, Check } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -32,6 +33,16 @@ interface LyricLine {
   duration?: number;
 }
 
+interface LyricsSearchResult {
+  id: number;
+  trackName: string;
+  artistName: string;
+  albumName?: string;
+  duration?: number;
+  lyrics: LyricLine[];
+  synced: boolean;
+}
+
 const Index = () => {
   const [query, setQuery] = useState("");
   const [tracks, setTracks] = useState<Track[]>([]);
@@ -47,7 +58,8 @@ const Index = () => {
   const [lyricsSearchArtist, setLyricsSearchArtist] = useState("");
   const [isSearchingLyrics, setIsSearchingLyrics] = useState(false);
   const [fetchedLyrics, setFetchedLyrics] = useState<LyricLine[]>([]);
-  const [lyricsConfirmed, setLyricsConfirmed] = useState(false);
+  const [lyricsSearchResults, setLyricsSearchResults] = useState<LyricsSearchResult[]>([]);
+  const [selectedLyricsId, setSelectedLyricsId] = useState<string>("");
 
   const handleSearch = async () => {
     if (!query.trim()) return;
@@ -93,8 +105,9 @@ const Index = () => {
   const handleSelectTrack = (track: Track) => {
     setSelectedTrack(track);
     setFetchedLyrics([]);
-    setLyricsConfirmed(false);
-    
+    setLyricsSearchResults([]);
+    setSelectedLyricsId("");
+
     // Pre-fill with cleaned track info
     const cleanTitle = track.title
       ?.replace(/\(.*?\)/g, '')
@@ -102,27 +115,31 @@ const Index = () => {
       ?.replace(/karaoke|instrumental|lyrics|official|video|audio|hd|4k/gi, '')
       ?.trim() || '';
     const cleanArtist = track.artist?.trim() || '';
-    
+
     setLyricsSearchTitle(cleanTitle);
     setLyricsSearchArtist(cleanArtist);
     setLyricsDialogOpen(true);
-    
-    // Auto-fetch lyrics
+
+    // Auto-fetch lyrics with multiple results
     fetchLyrics(cleanTitle, cleanArtist);
   };
 
   const fetchLyrics = async (title: string, artist: string) => {
     setIsSearchingLyrics(true);
+    setLyricsSearchResults([]);
+    setSelectedLyricsId("");
     try {
       const { data } = await supabase.functions.invoke('fetch-lyrics', {
-        body: { title, artist }
+        body: { title, artist, searchMultiple: true }
       });
-      if (data?.lyrics && data.lyrics.length > 0) {
-        setFetchedLyrics(data.lyrics);
+      if (data?.results && data.results.length > 0) {
+        setLyricsSearchResults(data.results);
+        setSelectedLyricsId(String(data.results[0].id));
+        setFetchedLyrics(data.results[0].lyrics);
       } else {
         setFetchedLyrics([]);
-        toast({ 
-          title: "No lyrics found", 
+        toast({
+          title: "No lyrics found",
           description: "Try editing the title/artist and search again",
           variant: "destructive"
         });
@@ -130,8 +147,8 @@ const Index = () => {
     } catch (error) {
       console.error('Failed to fetch lyrics:', error);
       setFetchedLyrics([]);
-      toast({ 
-        title: "Failed to fetch lyrics", 
+      toast({
+        title: "Failed to fetch lyrics",
         description: "Try editing the title and search again",
         variant: "destructive"
       });
