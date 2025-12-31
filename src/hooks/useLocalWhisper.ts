@@ -27,11 +27,10 @@ export function useLocalWhisper() {
       
       console.log('Loading Whisper model...');
       
-      // Use the tiny English model for faster loading and inference
-      // It's about 40MB and works well for short audio clips
+      // Use the multilingual tiny model for Hindi support
       const transcriber = await pipeline(
         'automatic-speech-recognition',
-        'onnx-community/whisper-tiny.en',
+        'onnx-community/whisper-tiny',
         {
           device: 'webgpu', // Use WebGPU if available, falls back to WASM
           progress_callback: (progress: any) => {
@@ -56,7 +55,7 @@ export function useLocalWhisper() {
         console.log('Retrying without WebGPU...');
         const transcriber = await pipeline(
           'automatic-speech-recognition',
-          'onnx-community/whisper-tiny.en',
+          'onnx-community/whisper-tiny',
           {
             progress_callback: (progress: any) => {
               if (progress.status === 'progress' && progress.progress) {
@@ -122,6 +121,7 @@ export function useLocalWhisper() {
           chunk_length_s: 30,
           stride_length_s: 5,
           return_timestamps: false,
+          language: 'hindi',
         });
 
         return { text: result.text || '' };
