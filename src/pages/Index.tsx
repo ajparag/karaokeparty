@@ -346,31 +346,32 @@ const Index = () => {
       
       {/* Lyrics Search Dialog */}
       <Dialog open={lyricsDialogOpen} onOpenChange={setLyricsDialogOpen}>
-        <DialogContent className="sm:max-w-md bg-card">
+        <DialogContent className="sm:max-w-lg bg-card max-h-[80vh] overflow-hidden flex flex-col">
           <DialogHeader>
             <DialogTitle>Setup Lyrics</DialogTitle>
             <DialogDescription>
               Search for synced lyrics before you start singing. You can skip this step if you prefer.
             </DialogDescription>
           </DialogHeader>
-          
-          {selectedTrack && (
-            <div className="flex items-center gap-3 p-3 rounded-lg bg-muted">
-              {selectedTrack.thumbnail && (
-                <img
-                  src={selectedTrack.thumbnail}
-                  alt={selectedTrack.title}
-                  className="w-12 h-12 rounded-lg object-cover"
-                />
-              )}
-              <div className="flex-1 min-w-0">
-                <p className="font-semibold text-sm truncate">{selectedTrack.title}</p>
-                <p className="text-xs text-muted-foreground truncate">{selectedTrack.artist}</p>
+
+          <div className="space-y-4 py-2 flex-1 overflow-y-auto">
+            {selectedTrack && (
+              <div className="flex items-center gap-3 p-3 rounded-lg bg-muted">
+                {selectedTrack.thumbnail && (
+                  <img
+                    src={selectedTrack.thumbnail}
+                    alt={selectedTrack.title}
+                    className="w-12 h-12 rounded-lg object-cover"
+                    loading="lazy"
+                  />
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-sm truncate">{selectedTrack.title}</p>
+                  <p className="text-xs text-muted-foreground truncate">{selectedTrack.artist}</p>
+                </div>
               </div>
-            </div>
-          )}
-          
-          <div className="space-y-4 py-2">
+            )}
+
             <div className="space-y-2">
               <Label htmlFor="lyrics-title">Song Title</Label>
               <Input
@@ -391,9 +392,9 @@ const Index = () => {
                 onKeyDown={(e) => e.key === 'Enter' && handleLyricsSearch()}
               />
             </div>
-            
-            <Button 
-              onClick={handleLyricsSearch} 
+
+            <Button
+              onClick={handleLyricsSearch}
               disabled={isSearchingLyrics || !lyricsSearchTitle.trim()}
               variant="outline"
               className="w-full"
@@ -410,21 +411,71 @@ const Index = () => {
                 </>
               )}
             </Button>
-            
+
+            {/* Search Results */}
+            {lyricsSearchResults.length > 0 && (
+              <div className="space-y-2">
+                <Label>Select Lyrics ({lyricsSearchResults.length} options)</Label>
+                <RadioGroup
+                  value={selectedLyricsId}
+                  onValueChange={(value) => {
+                    setSelectedLyricsId(value);
+                    const selected = lyricsSearchResults.find((r) => String(r.id) === value);
+                    if (selected) setFetchedLyrics(selected.lyrics);
+                  }}
+                  className="space-y-2"
+                >
+                  {lyricsSearchResults.map((result) => (
+                    <label
+                      key={result.id}
+                      className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                        selectedLyricsId === String(result.id)
+                          ? 'border-primary bg-primary/10'
+                          : 'border-border hover:border-primary/50'
+                      }`}
+                    >
+                      <RadioGroupItem value={String(result.id)} className="mt-1" />
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium truncate">{result.trackName}</p>
+                        <p className="text-sm text-muted-foreground truncate">{result.artistName}</p>
+                        <div className="flex items-center gap-2 mt-1">
+                          {result.albumName && (
+                            <span className="text-xs text-muted-foreground truncate max-w-[160px]">
+                              {result.albumName}
+                            </span>
+                          )}
+                          <span
+                            className={`text-xs px-1.5 py-0.5 rounded ${
+                              result.synced ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'
+                            }`}
+                          >
+                            {result.synced ? 'Synced' : 'Plain'}
+                          </span>
+                        </div>
+                      </div>
+                      {selectedLyricsId === String(result.id) && (
+                        <Check className="w-4 h-4 text-primary mt-1" />
+                      )}
+                    </label>
+                  ))}
+                </RadioGroup>
+              </div>
+            )}
+
             {/* Lyrics status */}
             {fetchedLyrics.length > 0 && (
               <div className="flex items-center gap-2 p-3 rounded-lg bg-primary/10 text-primary">
                 <Check className="w-4 h-4" />
-                <span className="text-sm font-medium">{fetchedLyrics.length} synced lines ready</span>
+                <span className="text-sm font-medium">{fetchedLyrics.length} lines ready</span>
               </div>
             )}
           </div>
-          
+
           <DialogFooter className="flex-col sm:flex-row gap-2">
             <Button variant="outline" onClick={handleSkipLyrics} className="w-full sm:w-auto">
               Skip Lyrics
             </Button>
-            <Button 
+            <Button
               onClick={handleStartSinging}
               className="gradient-primary text-primary-foreground w-full sm:w-auto"
             >
