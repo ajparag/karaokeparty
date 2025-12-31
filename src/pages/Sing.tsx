@@ -753,6 +753,19 @@ const Sing = () => {
             </div>
           </div>
           
+          {/* Live Transcription Display */}
+          {isMicActive && metrics.transcribedText && (
+            <div className="mb-4 p-3 bg-muted/50 rounded-lg border border-border/50">
+              <p className="text-xs text-muted-foreground mb-1 flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-score-perfect animate-pulse" />
+                Live transcription
+              </p>
+              <p className="text-sm text-foreground italic truncate">
+                "{metrics.transcribedText}"
+              </p>
+            </div>
+          )}
+          
           {/* Progress bar */}
           <div className="h-1 bg-muted rounded-full mb-4 overflow-hidden">
             <div 
