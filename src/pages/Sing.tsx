@@ -91,17 +91,23 @@ const Sing = () => {
     retryTranscription,
   } = useVocalAnalysis({
     onMetricsUpdate: (m) => {
-      if (m.isVoiceDetected && isPlaying) {
-        scoreAccumulatorRef.current.pitch += m.pitchAccuracy;
-        scoreAccumulatorRef.current.rhythm += m.rhythm;
-        scoreAccumulatorRef.current.diction += m.diction;
-        scoreAccumulatorRef.current.count += 1;
+      // Always update score when playing, even without voice detection
+      // This allows diction scores from Whisper to contribute
+      if (isPlaying) {
+        if (m.isVoiceDetected || m.diction > 0) {
+          scoreAccumulatorRef.current.pitch += m.pitchAccuracy;
+          scoreAccumulatorRef.current.rhythm += m.rhythm;
+          scoreAccumulatorRef.current.diction += m.diction;
+          scoreAccumulatorRef.current.count += 1;
+        }
         
-        const avgPitch = scoreAccumulatorRef.current.pitch / scoreAccumulatorRef.current.count;
-        const avgRhythm = scoreAccumulatorRef.current.rhythm / scoreAccumulatorRef.current.count;
-        const avgDiction = scoreAccumulatorRef.current.diction / scoreAccumulatorRef.current.count;
-        const combined = (avgPitch * 0.4 + avgRhythm * 0.35 + avgDiction * 0.25);
-        setTotalScore(Math.round(combined * 10));
+        if (scoreAccumulatorRef.current.count > 0) {
+          const avgPitch = scoreAccumulatorRef.current.pitch / scoreAccumulatorRef.current.count;
+          const avgRhythm = scoreAccumulatorRef.current.rhythm / scoreAccumulatorRef.current.count;
+          const avgDiction = scoreAccumulatorRef.current.diction / scoreAccumulatorRef.current.count;
+          const combined = (avgPitch * 0.4 + avgRhythm * 0.35 + avgDiction * 0.25);
+          setTotalScore(Math.round(combined * 10));
+        }
       }
     }
   });
