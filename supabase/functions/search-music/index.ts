@@ -5,6 +5,9 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Input validation limits
+const MAX_QUERY_LENGTH = 500;
+
 interface Track {
   id: string;
   title: string;
@@ -109,11 +112,13 @@ serve(async (req) => {
   }
 
   try {
-    const { query } = await req.json();
+    const body = await req.json();
+    const { query } = body;
     
+    // Input validation: check query exists and is a string
     if (!query || typeof query !== 'string') {
       return new Response(
-        JSON.stringify({ error: 'Query is required' }),
+        JSON.stringify({ error: 'Query is required and must be a string' }),
         { 
           status: 400, 
           headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
@@ -121,9 +126,32 @@ serve(async (req) => {
       );
     }
 
-    console.log('Searching Saavn for:', query);
+    // Trim and validate query length
+    const trimmedQuery = query.trim();
+    if (trimmedQuery.length === 0) {
+      return new Response(
+        JSON.stringify({ error: 'Query cannot be empty' }),
+        { 
+          status: 400, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        }
+      );
+    }
+
+    if (trimmedQuery.length > MAX_QUERY_LENGTH) {
+      console.error(`Query too long: ${trimmedQuery.length} characters`);
+      return new Response(
+        JSON.stringify({ error: `Query too long (max ${MAX_QUERY_LENGTH} characters)` }),
+        { 
+          status: 400, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        }
+      );
+    }
+
+    console.log('Searching Saavn for:', trimmedQuery);
     
-    const tracks = await searchSaavn(query);
+    const tracks = await searchSaavn(trimmedQuery);
     
     console.log(`Returning ${tracks.length} tracks`);
 

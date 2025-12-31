@@ -1,10 +1,14 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
+
+// Maximum audio size: 25MB
+const MAX_AUDIO_SIZE = 25 * 1024 * 1024;
 
 // Decode base64 safely in chunks (avoids huge intermediate strings)
 function decodeBase64ToBytes(base64: string, chunkSize = 32768) {
@@ -36,14 +40,54 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
+    // Verify authentication
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) {
+      console.error("No authorization header provided");
+      return new Response(
+        JSON.stringify({ error: "Authentication required" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Verify the JWT token
+    const supabaseClient = createClient(
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_ANON_KEY") ?? "",
+      { global: { headers: { Authorization: authHeader } } }
+    );
+
+    const { data: { user }, error: authError } = await supabaseClient.auth.getUser();
+
+    if (authError || !user) {
+      console.error("Invalid authentication:", authError?.message);
+      return new Response(
+        JSON.stringify({ error: "Invalid authentication" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    console.log(`Authenticated user: ${user.id}`);
+
     const { audio } = await req.json();
 
-    if (!audio) {
-      console.error("No audio data provided");
-      return new Response(JSON.stringify({ error: "No audio data provided" }), {
+    // Input validation: check audio exists and is a string
+    if (!audio || typeof audio !== "string") {
+      console.error("Invalid audio data provided");
+      return new Response(JSON.stringify({ error: "Invalid audio data" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+
+    // Check estimated size before decoding (base64 is ~4/3 the size of binary)
+    const estimatedSize = (audio.length * 3) / 4;
+    if (estimatedSize > MAX_AUDIO_SIZE) {
+      console.error(`Audio too large: estimated ${Math.round(estimatedSize / 1024 / 1024)}MB`);
+      return new Response(
+        JSON.stringify({ error: `Audio too large (max ${MAX_AUDIO_SIZE / 1024 / 1024}MB)` }),
+        { status: 413, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
     const openAIApiKey = Deno.env.get("OPENAI_API_KEY");
@@ -57,11 +101,33 @@ serve(async (req) => {
 
     console.log("Processing audio for transcription...");
 
-    const bytes = decodeBase64ToBytes(audio);
+    let bytes: Uint8Array;
+    try {
+      bytes = decodeBase64ToBytes(audio);
+    } catch (decodeError) {
+      console.error("Failed to decode base64 audio:", decodeError);
+      return new Response(JSON.stringify({ error: "Invalid base64 audio data" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Final size check after decoding
+    if (bytes.length > MAX_AUDIO_SIZE) {
+      console.error(`Audio size exceeds limit: ${bytes.length} bytes`);
+      return new Response(JSON.stringify({ error: "Audio size exceeds limit" }), {
+        status: 413,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     console.log(`Audio size: ${bytes.length} bytes`);
 
     const formData = new FormData();
-    const blob = new Blob([bytes], { type: "audio/webm" });
+    // Create a new ArrayBuffer copy to ensure compatibility
+    const arrayBuffer = new ArrayBuffer(bytes.length);
+    new Uint8Array(arrayBuffer).set(bytes);
+    const blob = new Blob([arrayBuffer], { type: "audio/webm" });
     formData.append("file", blob, "audio.webm");
     formData.append("model", "whisper-1");
     formData.append("response_format", "json");
@@ -122,4 +188,3 @@ serve(async (req) => {
     );
   }
 });
-

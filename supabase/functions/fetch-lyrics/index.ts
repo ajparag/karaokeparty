@@ -6,6 +6,12 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Input validation limits
+const MAX_TITLE_LENGTH = 200;
+const MAX_ARTIST_LENGTH = 200;
+const MAX_DURATION = 3600; // 1 hour max
+const MIN_DURATION = 0;
+
 interface LyricLine {
   time: number;
   text: string;
@@ -231,11 +237,13 @@ serve(async (req) => {
   }
 
   try {
-    const { title, artist, duration = 180, searchMultiple = false } = await req.json();
+    const body = await req.json();
+    const { title, artist, duration = 180, searchMultiple = false } = body;
     
-    if (!title) {
+    // Input validation: title is required and must be a string
+    if (!title || typeof title !== 'string') {
       return new Response(
-        JSON.stringify({ error: 'Title is required' }),
+        JSON.stringify({ error: 'Title is required and must be a string' }),
         { 
           status: 400, 
           headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
@@ -243,11 +251,86 @@ serve(async (req) => {
       );
     }
 
-    console.log('Fetching lyrics for:', title, 'by', artist, 'searchMultiple:', searchMultiple);
+    // Trim and validate title length
+    const trimmedTitle = title.trim();
+    if (trimmedTitle.length === 0) {
+      return new Response(
+        JSON.stringify({ error: 'Title cannot be empty' }),
+        { 
+          status: 400, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        }
+      );
+    }
+
+    if (trimmedTitle.length > MAX_TITLE_LENGTH) {
+      console.error(`Title too long: ${trimmedTitle.length} characters`);
+      return new Response(
+        JSON.stringify({ error: `Title too long (max ${MAX_TITLE_LENGTH} characters)` }),
+        { 
+          status: 400, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        }
+      );
+    }
+
+    // Validate artist if provided
+    let trimmedArtist = '';
+    if (artist !== undefined && artist !== null) {
+      if (typeof artist !== 'string') {
+        return new Response(
+          JSON.stringify({ error: 'Artist must be a string' }),
+          { 
+            status: 400, 
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+          }
+        );
+      }
+      trimmedArtist = artist.trim();
+      if (trimmedArtist.length > MAX_ARTIST_LENGTH) {
+        console.error(`Artist too long: ${trimmedArtist.length} characters`);
+        return new Response(
+          JSON.stringify({ error: `Artist too long (max ${MAX_ARTIST_LENGTH} characters)` }),
+          { 
+            status: 400, 
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+          }
+        );
+      }
+    }
+
+    // Validate duration
+    let validDuration = 180;
+    if (typeof duration === 'number') {
+      if (duration < MIN_DURATION || duration > MAX_DURATION) {
+        console.error(`Invalid duration: ${duration}`);
+        return new Response(
+          JSON.stringify({ error: `Duration must be between ${MIN_DURATION} and ${MAX_DURATION} seconds` }),
+          { 
+            status: 400, 
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+          }
+        );
+      }
+      validDuration = Math.floor(duration);
+    }
+
+    // Validate searchMultiple
+    if (searchMultiple !== undefined && typeof searchMultiple !== 'boolean') {
+      return new Response(
+        JSON.stringify({ error: 'searchMultiple must be a boolean' }),
+        { 
+          status: 400, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        }
+      );
+    }
+
+    console.log('Fetching lyrics for:', trimmedTitle, 'by', trimmedArtist, 'searchMultiple:', searchMultiple);
     
     // If searchMultiple is true, return top 3 results for user selection
     if (searchMultiple) {
-      const results = await searchLRCLIBMultiple(title, artist || '');
+      const results = await searchLRCLIBMultiple(trimmedTitle, trimmedArtist);
       
       console.log(`Found ${results.length} results from LRCLIB`);
       
@@ -258,7 +341,7 @@ serve(async (req) => {
     }
     
     // Default behavior: return first/best match
-    const lyricsResult = await searchLRCLIB(title, artist || '');
+    const lyricsResult = await searchLRCLIB(trimmedTitle, trimmedArtist);
     
     if (lyricsResult) {
       console.log(`Found ${lyricsResult.lyrics.length} lines from ${lyricsResult.source}`);
@@ -270,7 +353,7 @@ serve(async (req) => {
     
     // Fallback to placeholder
     console.log('No lyrics found, using placeholder');
-    const placeholder = generatePlaceholderLyrics(title, duration);
+    const placeholder = generatePlaceholderLyrics(trimmedTitle, validDuration);
     
     return new Response(
       JSON.stringify(placeholder),
