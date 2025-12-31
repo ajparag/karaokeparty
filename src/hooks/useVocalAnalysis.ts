@@ -30,6 +30,7 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     diction: 0,
     volume: 0,
     isVoiceDetected: false,
+    transcribedText: '',
   });
 
   // Local Whisper hook for browser-based transcription
@@ -50,6 +51,8 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
 
   const transcriptionIntervalRef = useRef<number | null>(null);
   const lastDictionScoreRef = useRef<number>(0);
+  const lastTranscribedTextRef = useRef<string>('');
+  const transcriptionInFlightRef = useRef(false);
   const transcriptionDisabledRef = useRef(false);
 
   // Raw PCM capture for Whisper (avoids webm decode issues)
@@ -117,6 +120,10 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       console.log('[whisper] skip: transcriptionDisabledRef=true');
       return;
     }
+    if (transcriptionInFlightRef.current) {
+      console.log('[whisper] skip: transcription already in flight');
+      return;
+    }
     if (!checkModelReady()) {
       console.log('[whisper] skip: model not ready (ref check)');
       return;
@@ -126,45 +133,52 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       return;
     }
 
-    const sampleRate = inputSampleRateRef.current || 48000;
-    const mergedLength = pcmChunksRef.current.reduce((sum, c) => sum + c.length, 0);
-
-    console.log('[whisper] tick', debugRef.current.transcriptionTicks, {
-      pcmChunks: pcmChunksRef.current.length,
-      mergedLength,
-      sampleRate,
-    });
-
-    // Need ~0.75s minimum audio to be meaningful
-    if (mergedLength < sampleRate * 0.75) {
-      console.log('[whisper] skip: not enough audio yet', {
-        mergedLength,
-        minNeeded: Math.floor(sampleRate * 0.75),
-      });
-      return;
-    }
-
-    const merged = new Float32Array(mergedLength);
-    let offset = 0;
-    for (const chunk of pcmChunksRef.current) {
-      merged.set(chunk, offset);
-      offset += chunk.length;
-    }
-    pcmChunksRef.current = [];
-
-    const audio16k = downsampleTo16k(merged, sampleRate);
-    console.log('[whisper] prepared audio', {
-      inSamples: merged.length,
-      outSamples: audio16k.length,
-      inSampleRate: sampleRate,
-      outSampleRate: 16000,
-    });
+    transcriptionInFlightRef.current = true;
 
     try {
+      const sampleRate = inputSampleRateRef.current || 48000;
+      const mergedLength = pcmChunksRef.current.reduce((sum, c) => sum + c.length, 0);
+
+      console.log('[whisper] tick', debugRef.current.transcriptionTicks, {
+        pcmChunks: pcmChunksRef.current.length,
+        mergedLength,
+        sampleRate,
+      });
+
+      // Need ~0.75s minimum audio to be meaningful
+      if (mergedLength < sampleRate * 0.75) {
+        console.log('[whisper] skip: not enough audio yet', {
+          mergedLength,
+          minNeeded: Math.floor(sampleRate * 0.75),
+        });
+        return;
+      }
+
+      const merged = new Float32Array(mergedLength);
+      let offset = 0;
+      for (const chunk of pcmChunksRef.current) {
+        merged.set(chunk, offset);
+        offset += chunk.length;
+      }
+      pcmChunksRef.current = [];
+
+      const audio16k = downsampleTo16k(merged, sampleRate);
+      console.log('[whisper] prepared audio', {
+        inSamples: merged.length,
+        outSamples: audio16k.length,
+        inSampleRate: sampleRate,
+        outSampleRate: 16000,
+      });
+
       console.log('[whisper] calling model...');
       const result = await transcribe(audio16k);
       const transcribedText = result?.text?.trim() || '';
       console.log('[whisper] result', { text: transcribedText });
+
+      // Keep the last text around so the UI reliably shows something once we get any output.
+      if (transcribedText) {
+        lastTranscribedTextRef.current = transcribedText;
+      }
 
       if (!transcribedText) return;
 
@@ -186,10 +200,12 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       setMetrics((prev) => ({
         ...prev,
         diction: dictionScore,
-        transcribedText,
+        transcribedText: lastTranscribedTextRef.current,
       }));
     } catch (err) {
       console.error('[whisper] transcribe failed:', err);
+    } finally {
+      transcriptionInFlightRef.current = false;
     }
   }, [checkModelReady, transcribe, options.expectedLyrics, calculateSimilarity, downsampleTo16k]);
 
@@ -274,7 +290,7 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       diction: lastDictionScoreRef.current, // Use Whisper-based diction score
       volume: currentVolume,
       isVoiceDetected,
-      transcribedText: metrics.transcribedText,
+      transcribedText: lastTranscribedTextRef.current,
     };
   }, [metrics.pitchAccuracy, metrics.transcribedText]);
 
@@ -446,6 +462,7 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     beatTimesRef.current = [];
     pcmChunksRef.current = [];
     lastDictionScoreRef.current = 0;
+    lastTranscribedTextRef.current = '';
     setMetrics({
       pitch: 0,
       pitchAccuracy: 0,
@@ -453,6 +470,7 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       diction: 0,
       volume: 0,
       isVoiceDetected: false,
+      transcribedText: '',
     });
   }, []);
 
