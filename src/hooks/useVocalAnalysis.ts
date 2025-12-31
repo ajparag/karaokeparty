@@ -89,30 +89,41 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
   // Transcribe audio using local Whisper model (browser-based)
   const transcribeAudio = useCallback(async () => {
     if (transcriptionDisabledRef.current) return;
-    if (!isModelReady) return;
+    if (!isModelReady) {
+      console.log('Whisper model not ready yet, skipping transcription');
+      return;
+    }
     if (audioChunksRef.current.length === 0) return;
 
     const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
     audioChunksRef.current = []; // Clear chunks for next batch
 
     // Skip if too small (less than 1KB - likely silence)
-    if (audioBlob.size < 1000) return;
+    if (audioBlob.size < 1000) {
+      console.log('Audio chunk too small, skipping transcription');
+      return;
+    }
 
     try {
+      console.log('Transcribing audio chunk...', audioBlob.size, 'bytes');
       const result = await transcribe(audioBlob);
 
       if (result?.text) {
         const transcribedText = result.text.trim();
+        console.log('Transcribed:', transcribedText);
 
         // Calculate diction score based on similarity to expected lyrics
         let dictionScore = 0;
         if (options.expectedLyrics) {
           dictionScore = calculateSimilarity(transcribedText, options.expectedLyrics);
         } else if (transcribedText.length > 0) {
-          // If no expected lyrics, give points for clear speech
-          dictionScore = Math.min(80, transcribedText.split(/\s+/).length * 10);
+          // If no expected lyrics, give points for clear speech detection
+          // More words = clearer speech detected
+          const wordCount = transcribedText.split(/\s+/).filter(w => w.length > 0).length;
+          dictionScore = Math.min(85, 40 + wordCount * 8);
         }
 
+        console.log('Diction score:', dictionScore);
         lastDictionScoreRef.current = dictionScore;
 
         setMetrics((prev) => ({
