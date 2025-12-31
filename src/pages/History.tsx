@@ -159,7 +159,7 @@ export default function History() {
               <Mic className="h-16 w-16 text-muted-foreground/30 mx-auto mb-4" />
               <h3 className="text-xl font-semibold mb-2">No performances yet</h3>
               <p className="text-muted-foreground mb-4">Start singing to build your history!</p>
-              <Link to="/search">
+              <Link to="/">
                 <Button className="gradient-primary text-primary-foreground">
                   <Music className="w-4 h-4 mr-2" />
                   Start Singing
