@@ -7,9 +7,19 @@ const corsHeaders = {
 };
 
 interface LyricLine {
-  time: number; // Time in seconds
+  time: number;
   text: string;
-  duration?: number; // Duration of this line
+  duration?: number;
+}
+
+interface LyricsResult {
+  id: number;
+  trackName: string;
+  artistName: string;
+  albumName?: string;
+  duration?: number;
+  lyrics: LyricLine[];
+  synced: boolean;
 }
 
 interface LyricsResponse {
@@ -18,13 +28,17 @@ interface LyricsResponse {
   synced: boolean;
 }
 
+interface SearchResultsResponse {
+  results: LyricsResult[];
+  source: string;
+}
+
 // Parse LRC format to structured lyrics
 function parseLRC(lrc: string): LyricLine[] {
   const lines: LyricLine[] = [];
   const lrcLines = lrc.split('\n');
   
   for (const line of lrcLines) {
-    // Match [mm:ss.xx] or [mm:ss] format
     const match = line.match(/\[(\d{2}):(\d{2})(?:\.(\d{2,3}))?\](.*)/);
     
     if (match) {
@@ -40,25 +54,88 @@ function parseLRC(lrc: string): LyricLine[] {
     }
   }
   
-  // Calculate durations
   for (let i = 0; i < lines.length; i++) {
     if (i < lines.length - 1) {
       lines[i].duration = lines[i + 1].time - lines[i].time;
     } else {
-      lines[i].duration = 5; // Default 5 seconds for last line
+      lines[i].duration = 5;
     }
   }
   
   return lines.sort((a, b) => a.time - b.time);
 }
 
-// Search LRCLIB for synced lyrics
+// Convert plain lyrics to timed format
+function convertPlainLyrics(plainLyrics: string): LyricLine[] {
+  const lines = plainLyrics.split('\n').filter((l: string) => l.trim());
+  const estimatedDuration = 4;
+  
+  return lines.map((text: string, i: number) => ({
+    time: i * estimatedDuration,
+    text: text.trim(),
+    duration: estimatedDuration,
+  }));
+}
+
+// Search LRCLIB and return top results
+async function searchLRCLIBMultiple(title: string, artist: string): Promise<LyricsResult[]> {
+  try {
+    const encodedTitle = encodeURIComponent(title);
+    const encodedArtist = encodeURIComponent(artist);
+    
+    // Use search endpoint to get multiple results
+    const searchResponse = await fetch(
+      `https://lrclib.net/api/search?track_name=${encodedTitle}${artist ? `&artist_name=${encodedArtist}` : ''}`
+    );
+    
+    if (!searchResponse.ok) {
+      console.error('LRCLIB search failed:', searchResponse.status);
+      return [];
+    }
+    
+    const results = await searchResponse.json();
+    
+    if (!Array.isArray(results) || results.length === 0) {
+      return [];
+    }
+    
+    // Take top 3 results and parse their lyrics
+    const top3 = results.slice(0, 3).map((result: any) => {
+      let lyrics: LyricLine[] = [];
+      let synced = false;
+      
+      if (result.syncedLyrics) {
+        lyrics = parseLRC(result.syncedLyrics);
+        synced = true;
+      } else if (result.plainLyrics) {
+        lyrics = convertPlainLyrics(result.plainLyrics);
+        synced = false;
+      }
+      
+      return {
+        id: result.id,
+        trackName: result.trackName || title,
+        artistName: result.artistName || artist,
+        albumName: result.albumName,
+        duration: result.duration,
+        lyrics,
+        synced,
+      };
+    });
+    
+    return top3.filter((r: LyricsResult) => r.lyrics.length > 0);
+  } catch (error) {
+    console.error('LRCLIB search error:', error);
+    return [];
+  }
+}
+
+// Search LRCLIB for synced lyrics (single result - legacy)
 async function searchLRCLIB(title: string, artist: string): Promise<LyricsResponse | null> {
   try {
     const encodedTitle = encodeURIComponent(title);
     const encodedArtist = encodeURIComponent(artist);
     
-    // Try exact match first
     const exactResponse = await fetch(
       `https://lrclib.net/api/get?track_name=${encodedTitle}&artist_name=${encodedArtist}`
     );
@@ -75,23 +152,14 @@ async function searchLRCLIB(title: string, artist: string): Promise<LyricsRespon
       }
       
       if (data.plainLyrics) {
-        // Convert plain lyrics to timed format (estimate timing)
-        const lines = data.plainLyrics.split('\n').filter((l: string) => l.trim());
-        const estimatedDuration = 4; // 4 seconds per line estimate
-        
         return {
-          lyrics: lines.map((text: string, i: number) => ({
-            time: i * estimatedDuration,
-            text: text.trim(),
-            duration: estimatedDuration,
-          })),
+          lyrics: convertPlainLyrics(data.plainLyrics),
           source: 'lrclib',
           synced: false,
         };
       }
     }
     
-    // Try search endpoint
     const searchResponse = await fetch(
       `https://lrclib.net/api/search?track_name=${encodedTitle}&artist_name=${encodedArtist}`
     );
@@ -111,15 +179,8 @@ async function searchLRCLIB(title: string, artist: string): Promise<LyricsRespon
         }
         
         if (best.plainLyrics) {
-          const lines = best.plainLyrics.split('\n').filter((l: string) => l.trim());
-          const estimatedDuration = 4;
-          
           return {
-            lyrics: lines.map((text: string, i: number) => ({
-              time: i * estimatedDuration,
-              text: text.trim(),
-              duration: estimatedDuration,
-            })),
+            lyrics: convertPlainLyrics(best.plainLyrics),
             source: 'lrclib',
             synced: false,
           };
@@ -170,7 +231,7 @@ serve(async (req) => {
   }
 
   try {
-    const { title, artist, duration = 180 } = await req.json();
+    const { title, artist, duration = 180, searchMultiple = false } = await req.json();
     
     if (!title) {
       return new Response(
@@ -182,9 +243,21 @@ serve(async (req) => {
       );
     }
 
-    console.log('Fetching lyrics for:', title, 'by', artist);
+    console.log('Fetching lyrics for:', title, 'by', artist, 'searchMultiple:', searchMultiple);
     
-    // Try LRCLIB
+    // If searchMultiple is true, return top 3 results for user selection
+    if (searchMultiple) {
+      const results = await searchLRCLIBMultiple(title, artist || '');
+      
+      console.log(`Found ${results.length} results from LRCLIB`);
+      
+      return new Response(
+        JSON.stringify({ results, source: 'lrclib' } as SearchResultsResponse),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    
+    // Default behavior: return first/best match
     const lyricsResult = await searchLRCLIB(title, artist || '');
     
     if (lyricsResult) {
