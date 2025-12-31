@@ -7,8 +7,9 @@ const hasDevanagari = (text: string) => /[\u0900-\u097F]/.test(text);
 // Simple mobile detection to avoid loading heavy Whisper model on phones
 const isMobileDevice = () => {
   if (typeof window === 'undefined') return false;
-  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) 
-    || window.innerWidth < 768;
+  const ua = navigator.userAgent || '';
+  // IMPORTANT: do NOT use viewport width here; it incorrectly treats narrow desktop windows as mobile.
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
 };
 
 interface VocalMetrics {
@@ -448,6 +449,7 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       lastDictionScoreRef.current = 0;
       setMetrics((prev) => ({ ...prev, diction: 0, transcribedText: '' }));
       
+      isMobileRef.current = isMobileDevice();
       const isMobile = isMobileRef.current;
       console.log('[analysis] starting', { isMobile });
 
@@ -692,8 +694,8 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     lastTranscribedTextRef.current = '';
     setMetrics((prev) => ({ ...prev, transcribedText: '' }));
 
-    // Load model if not ready
-    if (!isModelReady) {
+    // Load model if not ready (desktop only)
+    if (!isMobileRef.current && !isModelReady) {
       await loadModel();
     }
 
