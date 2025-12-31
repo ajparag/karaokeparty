@@ -933,19 +933,20 @@ const ScoreItem = ({ label, value, color, isActive, disabled, onRetry, hint, wei
         style={{ width: `${value}%` }} 
       />
     </div>
-    {disabled ? (
-      <button 
+    <p className={`text-sm font-medium transition-all ${isActive ? 'scale-110' : ''}`}>
+      {Math.round(value)}%
+    </p>
+
+    {disabled && onRetry && (
+      <button
+        type="button"
         onClick={onRetry}
-        className="text-xs text-amber-500 hover:text-amber-400 flex items-center justify-center gap-1 mx-auto transition-colors"
+        className="mt-1 text-xs text-amber-500 hover:text-amber-400 flex items-center justify-center gap-1 mx-auto transition-colors"
         title="Retry diction scoring"
       >
         <RefreshCw className="w-3 h-3" />
         <span>Retry</span>
       </button>
-    ) : (
-      <p className={`text-sm font-medium transition-all ${isActive ? 'scale-110' : ''}`}>
-        {Math.round(value)}%
-      </p>
     )}
     <p className="text-xs text-muted-foreground">
       {label} {weight && <span className="text-primary/70">({weight})</span>}
