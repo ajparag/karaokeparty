@@ -77,41 +77,57 @@ export function useLocalWhisper() {
     }
   }, []);
 
-  const transcribe = useCallback(async (audioBlob: Blob): Promise<TranscriptionResult | null> => {
-    if (!pipelineRef.current) {
-      console.warn('Whisper model not loaded');
-      return null;
-    }
+  const transcribe = useCallback(
+    async (audioInput: Blob | Float32Array): Promise<TranscriptionResult | null> => {
+      if (!pipelineRef.current) {
+        console.warn('Whisper model not loaded');
+        return null;
+      }
 
-    try {
-      // Convert blob to array buffer
-      const arrayBuffer = await audioBlob.arrayBuffer();
-      
-      // Create audio context to decode the audio
-      const audioContext = new AudioContext({ sampleRate: 16000 });
-      const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-      
-      // Get mono audio data
-      const channelData = audioBuffer.getChannelData(0);
-      
-      // Convert Float32Array to the format the model expects
-      const audioData = new Float32Array(channelData);
-      
-      // Run transcription
-      const result = await pipelineRef.current(audioData, {
-        chunk_length_s: 30,
-        stride_length_s: 5,
-        return_timestamps: false,
-      });
-      
-      await audioContext.close();
-      
-      return { text: result.text || '' };
-    } catch (err) {
-      console.error('Transcription error:', err);
-      return null;
-    }
-  }, []);
+      try {
+        let audioData: Float32Array;
+
+        if (audioInput instanceof Float32Array) {
+          // Already raw mono PCM (ideally 16kHz)
+          audioData = audioInput;
+        } else {
+          // Decode Blob -> Float32Array
+          const arrayBuffer = await audioInput.arrayBuffer();
+          const audioContext = new AudioContext();
+          const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+          const channelData = audioBuffer.getChannelData(0);
+
+          // Downsample to 16kHz if needed (simple decimation)
+          if (audioBuffer.sampleRate !== 16000) {
+            const ratio = audioBuffer.sampleRate / 16000;
+            const newLength = Math.floor(channelData.length / ratio);
+            const downsampled = new Float32Array(newLength);
+            for (let i = 0; i < newLength; i++) {
+              downsampled[i] = channelData[Math.floor(i * ratio)];
+            }
+            audioData = downsampled;
+          } else {
+            audioData = new Float32Array(channelData);
+          }
+
+          await audioContext.close();
+        }
+
+        const result = await pipelineRef.current(audioData, {
+          chunk_length_s: 30,
+          stride_length_s: 5,
+          return_timestamps: false,
+        });
+
+        return { text: result.text || '' };
+      } catch (err) {
+        console.error('Transcription error:', err);
+        return null;
+      }
+    },
+    []
+  );
 
   const dispose = useCallback(() => {
     if (pipelineRef.current) {
