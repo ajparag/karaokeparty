@@ -93,37 +93,37 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       reader.readAsDataURL(audioBlob);
       const base64Audio = await base64Promise;
 
-      const { data, error } = await supabase.functions.invoke('transcribe-audio', {
+      const response = await supabase.functions.invoke('transcribe-audio', {
         body: { audio: base64Audio },
       });
 
-      if (error) {
-        const status =
-          (error as any)?.context?.status ??
-          (error as any)?.status ??
-          (typeof (error as any)?.message === 'string' && (error as any).message.match(/\b(402|429)\b/)?.[1]
-            ? Number((error as any).message.match(/\b(402|429)\b/)?.[1])
-            : undefined);
+      // Check for quota/rate limit errors - either from error object or from data containing error
+      const errorMessage = response.error?.message || response.data?.error || '';
+      const isQuotaError = 
+        errorMessage.toLowerCase().includes('quota') ||
+        errorMessage.toLowerCase().includes('exceeded') ||
+        errorMessage.includes('429') ||
+        errorMessage.includes('402');
 
-        // Disable repeated failing calls (prevents spamming the function when quota/rate-limited)
-        if (status === 402 || status === 429) {
+      if (response.error || isQuotaError) {
+        // Disable transcription on quota/rate limit errors
+        if (isQuotaError) {
           transcriptionDisabledRef.current = true;
-          transcriptionDisabledReasonRef.current =
-            status === 402
-              ? 'Transcription requires credits (402)'
-              : 'Transcription rate-limited / out of quota (429)';
+          transcriptionDisabledReasonRef.current = 'OpenAI quota exceeded - continuing without transcription';
 
           if (transcriptionIntervalRef.current) {
             clearInterval(transcriptionIntervalRef.current);
             transcriptionIntervalRef.current = null;
           }
 
-          console.warn('Disabling transcription:', transcriptionDisabledReasonRef.current);
+          console.warn('Disabling transcription: OpenAI quota exceeded. Continuing without diction scoring.');
         } else {
-          console.error('Transcription error:', error);
+          console.error('Transcription error:', response.error);
         }
         return;
       }
+
+      const data = response.data;
 
       if (data?.text) {
         const transcribedText = data.text;
