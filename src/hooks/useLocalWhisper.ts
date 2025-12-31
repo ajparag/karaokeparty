@@ -1,5 +1,11 @@
 import { useState, useRef, useCallback } from 'react';
 
+const WHISPER_MODEL_ID = 'onnx-community/whisper-tiny';
+const WHISPER_LANGUAGE_PRIMARY = 'hi';
+const WHISPER_LANGUAGE_FALLBACK = 'hindi';
+
+const hasDevanagari = (text: string) => /[\u0900-\u097F]/.test(text);
+
 interface TranscriptionResult {
   text: string;
 }
@@ -11,11 +17,21 @@ export function useLocalWhisper() {
   const [error, setError] = useState<string | null>(null);
   
   const pipelineRef = useRef<any>(null);
+  const modelIdRef = useRef<string | null>(null);
   const isLoadingRef = useRef(false);
   const isModelReadyRef = useRef(false);
 
   const loadModel = useCallback(async () => {
-    if (pipelineRef.current || isLoadingRef.current) return;
+    if (isLoadingRef.current) return;
+
+    // If an older model instance is already loaded (e.g. after hot reload), force reload
+    if (pipelineRef.current && modelIdRef.current === WHISPER_MODEL_ID) return;
+    if (pipelineRef.current && modelIdRef.current !== WHISPER_MODEL_ID) {
+      pipelineRef.current = null;
+      modelIdRef.current = null;
+      isModelReadyRef.current = false;
+      setIsModelReady(false);
+    }
     
     isLoadingRef.current = true;
     setIsModelLoading(true);
@@ -30,7 +46,7 @@ export function useLocalWhisper() {
       // Use the multilingual tiny model for Hindi support
       const transcriber = await pipeline(
         'automatic-speech-recognition',
-        'onnx-community/whisper-tiny',
+        WHISPER_MODEL_ID,
         {
           device: 'webgpu', // Use WebGPU if available, falls back to WASM
           progress_callback: (progress: any) => {
@@ -42,6 +58,7 @@ export function useLocalWhisper() {
       );
       
       pipelineRef.current = transcriber;
+      modelIdRef.current = WHISPER_MODEL_ID;
       isModelReadyRef.current = true;
       setIsModelReady(true);
       console.log('Whisper model loaded successfully');
@@ -55,7 +72,7 @@ export function useLocalWhisper() {
         console.log('Retrying without WebGPU...');
         const transcriber = await pipeline(
           'automatic-speech-recognition',
-          'onnx-community/whisper-tiny',
+          WHISPER_MODEL_ID,
           {
             progress_callback: (progress: any) => {
               if (progress.status === 'progress' && progress.progress) {
@@ -66,6 +83,7 @@ export function useLocalWhisper() {
         );
         
         pipelineRef.current = transcriber;
+        modelIdRef.current = WHISPER_MODEL_ID;
         isModelReadyRef.current = true;
         setIsModelReady(true);
         console.log('Whisper model loaded (WASM fallback)');
@@ -117,18 +135,37 @@ export function useLocalWhisper() {
           await audioContext.close();
         }
 
-        const result = await pipelineRef.current(audioData, {
+        const baseOpts = {
           chunk_length_s: 30,
           stride_length_s: 5,
           return_timestamps: false,
           // Force Hindi transcription (Devanagari), not translation
           task: 'transcribe',
-          language: 'hi',
+          language: WHISPER_LANGUAGE_PRIMARY,
+        } as const;
+
+        let result = await pipelineRef.current(audioData, {
+          ...baseOpts,
           generate_kwargs: {
             task: 'transcribe',
-            language: 'hi',
+            language: WHISPER_LANGUAGE_PRIMARY,
           },
         });
+
+        const text1 = (result?.text || '').trim();
+
+        // transformers.js sometimes prefers full language name; retry if output isn't Devanagari
+        if (text1 && !hasDevanagari(text1)) {
+          const retry = await pipelineRef.current(audioData, {
+            ...baseOpts,
+            language: WHISPER_LANGUAGE_FALLBACK,
+            generate_kwargs: {
+              task: 'transcribe',
+              language: WHISPER_LANGUAGE_FALLBACK,
+            },
+          });
+          if (retry?.text) result = retry;
+        }
 
         return { text: result.text || '' };
       } catch (err) {
@@ -142,6 +179,7 @@ export function useLocalWhisper() {
   const dispose = useCallback(() => {
     if (pipelineRef.current) {
       pipelineRef.current = null;
+      modelIdRef.current = null;
       isModelReadyRef.current = false;
       setIsModelReady(false);
     }
