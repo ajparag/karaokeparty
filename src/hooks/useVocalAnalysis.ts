@@ -313,13 +313,14 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       lastDictionScoreRef.current = 0;
       setMetrics((prev) => ({ ...prev, diction: 0, transcribedText: '' }));
       
-      // Load Whisper model if not already loaded
-      if (!isModelReady) {
-        console.log('[whisper] loadModel(): starting (diction scoring)');
-        await loadModel();
-        console.log('[whisper] loadModel(): done', { isModelReady: true });
-      } else {
-        console.log('[whisper] model already ready');
+      // Load Whisper model and wait for it to be ready
+      console.log('[whisper] loadModel(): starting (diction scoring)');
+      const modelLoaded = await loadModel();
+      console.log('[whisper] loadModel(): done', { modelLoaded, checkReady: checkModelReady() });
+      
+      if (!modelLoaded) {
+        console.error('[whisper] Model failed to load - transcription will not work');
+        setError('Failed to load speech recognition model');
       }
       
       console.log('[mic] requesting getUserMedia...');

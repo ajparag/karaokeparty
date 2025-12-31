@@ -25,11 +25,26 @@ export function useLocalWhisper() {
   const forcedDecoderIdsPrimaryRef = useRef<any>(null);
   const forcedDecoderIdsFallbackRef = useRef<any>(null);
 
-  const loadModel = useCallback(async () => {
-    if (isLoadingRef.current) return;
+  const loadModel = useCallback(async (): Promise<boolean> => {
+    // If already loading, wait for it
+    if (isLoadingRef.current) {
+      // Poll until loading finishes
+      return new Promise((resolve) => {
+        const check = () => {
+          if (!isLoadingRef.current) {
+            resolve(isModelReadyRef.current);
+          } else {
+            setTimeout(check, 100);
+          }
+        };
+        check();
+      });
+    }
 
     // If an older model instance is already loaded (e.g. after hot reload), force reload
-    if (pipelineRef.current && modelIdRef.current === WHISPER_MODEL_ID) return;
+    if (pipelineRef.current && modelIdRef.current === WHISPER_MODEL_ID) {
+      return true;
+    }
     if (pipelineRef.current && modelIdRef.current !== WHISPER_MODEL_ID) {
       pipelineRef.current = null;
       modelIdRef.current = null;
@@ -45,9 +60,9 @@ export function useLocalWhisper() {
       // Dynamic import to avoid loading the library until needed
       const { pipeline } = await import('@huggingface/transformers');
       
-      console.log('Loading Whisper model...');
+      console.log('Loading Whisper model...', WHISPER_MODEL_ID);
       
-      // Use the multilingual tiny model for Hindi support
+      // Use the multilingual small model for Hindi support
       const transcriber = await pipeline(
         'automatic-speech-recognition',
         WHISPER_MODEL_ID,
@@ -57,6 +72,7 @@ export function useLocalWhisper() {
             if (progress.status === 'progress' && progress.progress) {
               setLoadProgress(Math.round(progress.progress));
             }
+            console.log('[whisper] load progress', progress);
           },
         }
       );
@@ -66,6 +82,7 @@ export function useLocalWhisper() {
       isModelReadyRef.current = true;
       setIsModelReady(true);
       console.log('Whisper model loaded successfully');
+      return true;
     } catch (err) {
       console.error('Failed to load Whisper model:', err);
       
@@ -82,6 +99,7 @@ export function useLocalWhisper() {
               if (progress.status === 'progress' && progress.progress) {
                 setLoadProgress(Math.round(progress.progress));
               }
+              console.log('[whisper] load progress (fallback)', progress);
             },
           }
         );
@@ -91,10 +109,12 @@ export function useLocalWhisper() {
         isModelReadyRef.current = true;
         setIsModelReady(true);
         console.log('Whisper model loaded (WASM fallback)');
+        return true;
       } catch (fallbackErr) {
         console.error('Failed to load Whisper model (fallback):', fallbackErr);
         isModelReadyRef.current = false;
         setError('Failed to load speech recognition model');
+        return false;
       }
     } finally {
       setIsModelLoading(false);
