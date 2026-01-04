@@ -135,10 +135,14 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
 
   const ensureBackendRecorder = useCallback(() => {
     const stream = streamRef.current;
-    if (!stream) return false;
+    if (!stream) {
+      console.log('[backend-whisper] ensureBackendRecorder: no stream');
+      return false;
+    }
 
     // Already running
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      console.log('[backend-whisper] ensureBackendRecorder: already running');
       return true;
     }
 
@@ -155,6 +159,7 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       mediaRecorder.ondataavailable = (e) => {
         if (!e.data || e.data.size === 0) return;
         audioChunksRef.current.push(e.data);
+        console.log('[backend-whisper] ondataavailable', { chunkSize: e.data.size, totalChunks: audioChunksRef.current.length });
 
         // Limit buffer to ~30 seconds (rough estimate: ~50KB per second)
         let totalSize = audioChunksRef.current.reduce((sum, c) => sum + c.size, 0);
@@ -268,8 +273,20 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
 
   // Transcribe audio using local Whisper model (browser-based) - DESKTOP ONLY
   const transcribeAudio = useCallback(async () => {
+    const now = performance.now();
+    const elapsed = analysisStartedAtRef.current ? now - analysisStartedAtRef.current : 0;
+
+    console.log('[transcribeAudio] called', {
+      isMobile: isMobileRef.current,
+      backendFallback: backendFallbackRef.current,
+      elapsed: Math.round(elapsed),
+      modelReady: checkModelReady(),
+      whisperLoading,
+    });
+
     // On mobile (and when local model isn't available), use backend transcription instead
     if (isMobileRef.current || backendFallbackRef.current) {
+      console.log('[transcribeAudio] using backend path');
       ensureBackendRecorder();
       return transcribeAudioBackend();
     }
@@ -312,15 +329,16 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
           });
       }
 
-      // Hard fallback: if model isn't ready after ~12s, switch to backend so UI isn't stuck on "listening"
-      if (analysisStartedAtRef.current && now - analysisStartedAtRef.current > 12000) {
-        console.warn('[whisper] Model still not ready after 12s - using backend transcription');
+      // Hard fallback: if model isn't ready after ~8s, switch to backend so UI isn't stuck on "listening"
+      if (analysisStartedAtRef.current && elapsed > 8000) {
+        console.warn('[whisper] Model still not ready after 8s - using backend transcription');
         backendFallbackRef.current = true;
-        ensureBackendRecorder();
+        const ok = ensureBackendRecorder();
+        console.log('[whisper] ensureBackendRecorder result:', ok);
         return transcribeAudioBackend();
       }
 
-      console.log('[whisper] skip: model not ready (ref check)');
+      console.log('[whisper] skip: model not ready (ref check)', { elapsed: Math.round(elapsed) });
       return;
     }
 
