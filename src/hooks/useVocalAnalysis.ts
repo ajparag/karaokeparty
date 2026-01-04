@@ -67,6 +67,11 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
   const transcriptionDisabledRef = useRef(false);
   const isMobileRef = useRef(isMobileDevice());
 
+  // If local Whisper can't be loaded (or takes too long), fall back to backend transcription.
+  const backendFallbackRef = useRef(false);
+  const analysisStartedAtRef = useRef(0);
+  const lastModelLoadAttemptAtRef = useRef(0);
+
   // Raw PCM capture for Whisper (avoids webm decode issues)
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const pcmChunksRef = useRef<Float32Array[]>([]);
@@ -126,6 +131,51 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       output[i] = input[Math.floor(i * ratio)];
     }
     return output;
+  }, []);
+
+  const ensureBackendRecorder = useCallback(() => {
+    const stream = streamRef.current;
+    if (!stream) return false;
+
+    // Already running
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      return true;
+    }
+
+    if (typeof MediaRecorder === 'undefined') {
+      console.warn('[backend-whisper] MediaRecorder unavailable in this browser');
+      return false;
+    }
+
+    try {
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (!e.data || e.data.size === 0) return;
+        audioChunksRef.current.push(e.data);
+
+        // Limit buffer to ~30 seconds (rough estimate: ~50KB per second)
+        let totalSize = audioChunksRef.current.reduce((sum, c) => sum + c.size, 0);
+        while (totalSize > 1500000 && audioChunksRef.current.length > 1) {
+          totalSize -= audioChunksRef.current[0].size;
+          audioChunksRef.current.shift();
+        }
+      };
+
+      mediaRecorder.onerror = (e) => {
+        console.warn('[backend-whisper] MediaRecorder error', e);
+      };
+
+      // Request data every 500ms for faster backend processing
+      mediaRecorder.start(500);
+      console.log('[backend-whisper] MediaRecorder started (500ms chunks)');
+      return true;
+    } catch (recorderErr) {
+      console.warn('[backend-whisper] MediaRecorder not supported:', recorderErr);
+      return false;
+    }
   }, []);
 
   // Backend transcription for mobile devices (uses OpenAI Whisper API via edge function)
@@ -218,8 +268,9 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
 
   // Transcribe audio using local Whisper model (browser-based) - DESKTOP ONLY
   const transcribeAudio = useCallback(async () => {
-    // On mobile, use backend transcription instead
-    if (isMobileRef.current) {
+    // On mobile (and when local model isn't available), use backend transcription instead
+    if (isMobileRef.current || backendFallbackRef.current) {
+      ensureBackendRecorder();
       return transcribeAudioBackend();
     }
 
@@ -233,10 +284,46 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       console.log('[whisper] skip: transcription already in flight');
       return;
     }
+
     if (!checkModelReady()) {
+      const now = performance.now();
+
+      // If we aren't currently loading, kick off a load attempt (throttled)
+      if (!whisperLoading && now - lastModelLoadAttemptAtRef.current > 3000) {
+        lastModelLoadAttemptAtRef.current = now;
+        console.log('[whisper] model not ready - triggering loadModel()');
+        loadModel()
+          .then((modelLoaded) => {
+            console.log('[whisper] loadModel(): done (from loop)', {
+              modelLoaded,
+              checkReady: checkModelReady(),
+            });
+
+            if (!modelLoaded) {
+              console.warn('[whisper] Model failed to load - falling back to backend transcription');
+              backendFallbackRef.current = true;
+              ensureBackendRecorder();
+            }
+          })
+          .catch((err) => {
+            console.error('[whisper] Model load error (from loop):', err);
+            backendFallbackRef.current = true;
+            ensureBackendRecorder();
+          });
+      }
+
+      // Hard fallback: if model isn't ready after ~12s, switch to backend so UI isn't stuck on "listening"
+      if (analysisStartedAtRef.current && now - analysisStartedAtRef.current > 12000) {
+        console.warn('[whisper] Model still not ready after 12s - using backend transcription');
+        backendFallbackRef.current = true;
+        ensureBackendRecorder();
+        return transcribeAudioBackend();
+      }
+
       console.log('[whisper] skip: model not ready (ref check)');
       return;
     }
+
     if (pcmChunksRef.current.length === 0) {
       console.log('[whisper] skip: no pcm chunks');
       return;
@@ -324,7 +411,7 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     } finally {
       transcriptionInFlightRef.current = false;
     }
-  }, [checkModelReady, transcribe, options.expectedLyrics, calculateSimilarity, downsampleTo16k, transcribeAudioBackend]);
+  }, [checkModelReady, whisperLoading, loadModel, ensureBackendRecorder, transcribe, options.expectedLyrics, calculateSimilarity, downsampleTo16k, transcribeAudioBackend]);
 
   const detectPitch = useCallback((frequencyData: Uint8Array, sampleRate: number): number => {
     let maxIndex = 0;
@@ -448,7 +535,11 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       lastTranscribedTextRef.current = '';
       lastDictionScoreRef.current = 0;
       setMetrics((prev) => ({ ...prev, diction: 0, transcribedText: '' }));
-      
+
+      analysisStartedAtRef.current = performance.now();
+      lastModelLoadAttemptAtRef.current = 0;
+      backendFallbackRef.current = false;
+
       isMobileRef.current = isMobileDevice();
       const isMobile = isMobileRef.current;
       console.log('[analysis] starting', { isMobile });
@@ -498,31 +589,14 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       const source = audioContext.createMediaStreamSource(stream);
       source.connect(analyser);
 
-      // MOBILE: Use MediaRecorder for backend transcription (less memory intensive)
+      // MOBILE: Use backend transcription (less memory intensive)
       if (isMobile) {
-        try {
-          const mediaRecorder = new MediaRecorder(stream, {
-            mimeType: 'audio/webm;codecs=opus'
-          });
-          mediaRecorderRef.current = mediaRecorder;
-          audioChunksRef.current = [];
-
-          mediaRecorder.ondataavailable = (e) => {
-            if (e.data.size > 0) {
-              audioChunksRef.current.push(e.data);
-              // Limit buffer to ~30 seconds (rough estimate: ~50KB per second)
-              const totalSize = audioChunksRef.current.reduce((sum, c) => sum + c.size, 0);
-              while (totalSize > 1500000 && audioChunksRef.current.length > 1) {
-                audioChunksRef.current.shift();
-              }
-            }
-          };
-
-          // Request data every 500ms for faster backend processing
-          mediaRecorder.start(500);
-          console.log('[mobile] MediaRecorder started (500ms chunks)');
-        } catch (recorderErr) {
-          console.warn('[mobile] MediaRecorder not supported, transcription disabled:', recorderErr);
+        backendFallbackRef.current = true;
+        const ok = ensureBackendRecorder();
+        if (!ok) {
+          console.warn('[backend-whisper] MediaRecorder not supported; transcription disabled');
+          transcriptionDisabledRef.current = true;
+          setIsTranscriptionDisabled(true);
         }
       } else {
         // DESKTOP: Capture raw PCM for local Whisper (more reliable than MediaRecorder/webm decoding)
@@ -531,6 +605,9 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
 
         processor.onaudioprocess = (e) => {
           debugRef.current.audioProcessCalls += 1;
+
+          // If we've switched to backend transcription, stop buffering PCM (avoid unnecessary memory use)
+          if (backendFallbackRef.current) return;
 
           const input = e.inputBuffer.getChannelData(0);
           pcmChunksRef.current.push(new Float32Array(input));
@@ -606,7 +683,7 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       setError('Microphone access denied');
       setHasPermission(false);
     }
-  }, [detectPitch, calculateMetrics, options, transcribeAudio, isModelReady, loadModel]);
+  }, [detectPitch, calculateMetrics, options, transcribeAudio, isModelReady, loadModel, ensureBackendRecorder]);
 
   const stopAnalysis = useCallback(() => {
     if (animationFrameRef.current) {
@@ -694,6 +771,27 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     lastTranscribedTextRef.current = '';
     setMetrics((prev) => ({ ...prev, transcribedText: '' }));
 
+    // Reset timers/fallback state
+    analysisStartedAtRef.current = performance.now();
+    lastModelLoadAttemptAtRef.current = 0;
+
+    if (isMobileRef.current) {
+      backendFallbackRef.current = true;
+      ensureBackendRecorder();
+    } else {
+      backendFallbackRef.current = false;
+      // If we previously fell back, stop any running recorder so desktop local Whisper can take over.
+      if (mediaRecorderRef.current) {
+        try {
+          if (mediaRecorderRef.current.state !== 'inactive') mediaRecorderRef.current.stop();
+        } catch {
+          // ignore
+        }
+        mediaRecorderRef.current = null;
+      }
+      audioChunksRef.current = [];
+    }
+
     // Load model if not ready (desktop only)
     if (!isMobileRef.current && !isModelReady) {
       await loadModel();
@@ -707,7 +805,7 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       };
       transcriptionIntervalRef.current = window.setTimeout(loop, 0);
     }
-  }, [isActive, transcribeAudio, isModelReady, loadModel]);
+  }, [isActive, transcribeAudio, isModelReady, loadModel, ensureBackendRecorder]);
 
   useEffect(() => {
     return () => {
