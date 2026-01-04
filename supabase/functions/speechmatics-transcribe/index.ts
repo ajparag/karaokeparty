@@ -48,16 +48,18 @@ serve(async (req) => {
     
     // Create form data for Speechmatics batch API
     const formData = new FormData();
-    
-    // Add the audio file - try with audio/webm;codecs=opus which is what browsers typically send
-    const audioBlob = new Blob([bytes], { type: 'audio/webm;codecs=opus' });
-    formData.append('data_file', audioBlob, 'audio.webm');
-    
-    // Add the config - Hindi language with minimal required fields
+
+    // Speechmatics batch REST API does NOT support webm.
+    // Expect a WAV (PCM) payload from the client.
+    const audioBlob = new Blob([bytes], { type: 'audio/wav' });
+    formData.append('data_file', audioBlob, 'audio.wav');
+
+    // Add the config - Hindi language
     const config = {
       type: 'transcription',
       transcription_config: {
-        language: 'hi',
+        language: 'hi', // Hindi
+        operating_point: 'enhanced', // Better accuracy
       },
     };
     formData.append('config', JSON.stringify(config));
