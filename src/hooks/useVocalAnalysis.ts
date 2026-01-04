@@ -272,72 +272,76 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       console.log('[speechmatics] skip: transcription already in flight');
       return;
     }
-    if (audioChunksRef.current.length === 0) {
-      console.log('[speechmatics] skip: no audio chunks');
-      return;
-    }
+     if (pcmChunksRef.current.length === 0) {
+       console.log('[speechmatics] skip: no pcm buffered');
+       return;
+     }
 
-    transcriptionInFlightRef.current = true;
-    console.log('[speechmatics] transcriptionInFlightRef set to true, chunks:', audioChunksRef.current.length);
+     transcriptionInFlightRef.current = true;
+     console.log('[speechmatics] transcriptionInFlightRef set to true, pcmChunks:', pcmChunksRef.current.length);
 
-    // Update UI to show transcription in progress
-    setMetrics((prev) => ({
-      ...prev,
-      transcribedText: prev.transcribedText || '(transcribing...)',
-    }));
+     // Update UI to show transcription in progress
+     setMetrics((prev) => ({
+       ...prev,
+       transcribedText: prev.transcribedText || '(transcribing...)',
+     }));
 
-    try {
-      // Combine audio chunks into a single blob
-      const chunks = [...audioChunksRef.current]; // Copy before clearing
-      audioChunksRef.current = []; // Clear for next batch
-      
-      if (chunks.length === 0) {
-        console.log('[speechmatics] skip: no chunks after copy');
-        return;
-      }
+     try {
+       const sampleRate =
+         inputSampleRateRef.current || audioContextRef.current?.sampleRate || 48000;
 
-      const webmBlob = new Blob(chunks, { type: 'audio/webm;codecs=opus' });
-      console.log('[speechmatics] webm blob created', { size: webmBlob.size, chunkCount: chunks.length });
+       // Take the most recent ~5 seconds (Speechmatics batch works better with longer context)
+       const seconds = 5;
+       const targetSamples = Math.floor(sampleRate * seconds);
 
-      // Speechmatics batch API: webm is not supported; we must transcode to wav/mp3/etc.
-      // Also batch jobs need a few seconds of audio to be meaningful.
-      const minChunks = 8; // ~4 seconds (MediaRecorder 500ms)
-      if (chunks.length < minChunks) {
-        console.log('[speechmatics] skip: not enough audio for batch', { chunkCount: chunks.length, size: webmBlob.size });
-        audioChunksRef.current = [...chunks, ...audioChunksRef.current];
-        transcriptionInFlightRef.current = false;
-        return;
-      }
+       let total = 0;
+       const parts: Float32Array[] = [];
+       for (let i = pcmChunksRef.current.length - 1; i >= 0 && total < targetSamples; i--) {
+         const chunk = pcmChunksRef.current[i];
+         parts.push(chunk);
+         total += chunk.length;
+       }
 
-      let wavBlob: Blob;
-      try {
-        wavBlob = await transcodeWebmToWav16kMono(webmBlob);
-      } catch (e) {
-        console.error('[speechmatics] wav transcode failed', e);
-        audioChunksRef.current = [...chunks, ...audioChunksRef.current];
-        transcriptionInFlightRef.current = false;
-        return;
-      }
+       if (total < Math.floor(sampleRate * 2)) {
+         console.log('[speechmatics] skip: not enough pcm yet', { total, sampleRate });
+         return;
+       }
 
-      console.log('[speechmatics] wav blob created', { size: wavBlob.size, type: wavBlob.type });
+       parts.reverse();
+       const mono = new Float32Array(total);
+       let offset = 0;
+       for (const p of parts) {
+         mono.set(p, offset);
+         offset += p.length;
+       }
 
-      // Convert to base64 using FileReader with timeout
-      console.log('[speechmatics] converting to base64...');
-      const base64 = await Promise.race([
-        new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            const dataUrl = reader.result as string;
-            const base64Data = dataUrl.split(',')[1] || '';
-            resolve(base64Data);
-          };
-          reader.onerror = () => reject(new Error('FileReader error'));
-          reader.readAsDataURL(wavBlob);
-        }),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('base64 conversion timeout')), 5000)
-        )
-      ]);
+       // Keep only the last N seconds
+       const start = Math.max(0, mono.length - targetSamples);
+       const windowed = mono.slice(start);
+
+       const mono16k = downsampleTo16k(windowed, sampleRate);
+       const wavBuffer = encodeWavPcm16(mono16k, 16000);
+       const wavBlob = new Blob([wavBuffer], { type: 'audio/wav' });
+
+       console.log('[speechmatics] wav blob created', { size: wavBlob.size, seconds, sampleRate });
+
+       // Convert to base64 using FileReader with timeout
+       console.log('[speechmatics] converting to base64...');
+       const base64 = await Promise.race([
+         new Promise<string>((resolve, reject) => {
+           const reader = new FileReader();
+           reader.onloadend = () => {
+             const dataUrl = reader.result as string;
+             const base64Data = dataUrl.split(',')[1] || '';
+             resolve(base64Data);
+           };
+           reader.onerror = () => reject(new Error('FileReader error'));
+           reader.readAsDataURL(wavBlob);
+         }),
+         new Promise<never>((_, reject) =>
+           setTimeout(() => reject(new Error('base64 conversion timeout')), 5000)
+         )
+       ]);
 
       console.log('[speechmatics] base64 ready, length:', base64.length);
 
@@ -391,7 +395,7 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     } finally {
       transcriptionInFlightRef.current = false;
     }
-  }, [options.expectedLyrics, calculateSimilarity]);
+  }, [options.expectedLyrics, calculateSimilarity, downsampleTo16k, encodeWavPcm16]);
 
   // Transcribe audio using Speechmatics API (backend) - works on all devices
   const transcribeAudio = useCallback(async () => {
@@ -402,10 +406,8 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       elapsed: Math.round(elapsed),
     });
 
-    // Use Speechmatics backend for all transcription
-    ensureBackendRecorder();
     return transcribeAudioBackend();
-  }, [ensureBackendRecorder, transcribeAudioBackend]);
+  }, [transcribeAudioBackend]);
 
   const detectPitch = useCallback((frequencyData: Uint8Array, sampleRate: number): number => {
     let maxIndex = 0;
@@ -588,59 +590,46 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       const source = audioContext.createMediaStreamSource(stream);
       source.connect(analyser);
 
-      // MOBILE: Use backend transcription (less memory intensive)
-      if (isMobile) {
-        backendFallbackRef.current = true;
-        const ok = ensureBackendRecorder();
-        if (!ok) {
-          const msg = 'MediaRecorder not supported in this browser';
-          console.warn('[backend-whisper] ' + msg);
-          backendTranscriptionDisabledRef.current = true;
-          setIsTranscriptionDisabled(true);
-          setTranscriptionError(msg);
+      // Capture raw PCM for transcription.
+      // This avoids relying on MediaRecorder/webm (not supported by Speechmatics batch)
+      // and avoids webm->wav decode failures on some browsers.
+      const processor = audioContext.createScriptProcessor(4096, 1, 1);
+      processorRef.current = processor;
+
+      processor.onaudioprocess = (e) => {
+        debugRef.current.audioProcessCalls += 1;
+
+        const input = e.inputBuffer.getChannelData(0);
+        pcmChunksRef.current.push(new Float32Array(input));
+
+        // Throttled logging (every ~3s)
+        const now = performance.now();
+        if (now - debugRef.current.lastAudioProcessLogAt > 3000) {
+          debugRef.current.lastAudioProcessLogAt = now;
+          const totalSamples = pcmChunksRef.current.reduce((sum, c) => sum + c.length, 0);
+          console.log('[audio] onaudioprocess', {
+            calls: debugRef.current.audioProcessCalls,
+            chunkSamples: input.length,
+            bufferedChunks: pcmChunksRef.current.length,
+            bufferedSamples: totalSamples,
+            sampleRate: inputSampleRateRef.current || audioContext.sampleRate,
+          });
         }
-      } else {
-        // DESKTOP: Capture raw PCM for local Whisper (more reliable than MediaRecorder/webm decoding)
-        const processor = audioContext.createScriptProcessor(4096, 1, 1);
-        processorRef.current = processor;
 
-        processor.onaudioprocess = (e) => {
-          debugRef.current.audioProcessCalls += 1;
+        // Bound memory: keep up to ~30 seconds
+        const maxSamples = (inputSampleRateRef.current || audioContext.sampleRate) * 30;
+        let total = pcmChunksRef.current.reduce((sum, c) => sum + c.length, 0);
+        while (total > maxSamples && pcmChunksRef.current.length > 1) {
+          total -= pcmChunksRef.current[0].length;
+          pcmChunksRef.current.shift();
+        }
+      };
 
-          // Always buffer PCM for local Whisper on desktop (even if backend fallback was triggered
-          // previously due to quota errors — local model can still work).
-          const input = e.inputBuffer.getChannelData(0);
-          pcmChunksRef.current.push(new Float32Array(input));
-
-          // Throttled logging (every ~3s)
-          const now = performance.now();
-          if (now - debugRef.current.lastAudioProcessLogAt > 3000) {
-            debugRef.current.lastAudioProcessLogAt = now;
-            const totalSamples = pcmChunksRef.current.reduce((sum, c) => sum + c.length, 0);
-            console.log('[audio] onaudioprocess', {
-              calls: debugRef.current.audioProcessCalls,
-              chunkSamples: input.length,
-              bufferedChunks: pcmChunksRef.current.length,
-              bufferedSamples: totalSamples,
-              sampleRate: inputSampleRateRef.current || audioContext.sampleRate,
-            });
-          }
-
-          // Bound memory: keep up to ~30 seconds
-          const maxSamples = (inputSampleRateRef.current || audioContext.sampleRate) * 30;
-          let total = pcmChunksRef.current.reduce((sum, c) => sum + c.length, 0);
-          while (total > maxSamples && pcmChunksRef.current.length > 1) {
-            total -= pcmChunksRef.current[0].length;
-            pcmChunksRef.current.shift();
-          }
-        };
-
-        source.connect(processor);
-        const mute = audioContext.createGain();
-        mute.gain.value = 0;
-        processor.connect(mute);
-        mute.connect(audioContext.destination);
-      }
+      source.connect(processor);
+      const mute = audioContext.createGain();
+      mute.gain.value = 0;
+      processor.connect(mute);
+      mute.connect(audioContext.destination);
 
       // Transcribe every ~500ms for faster diction updates (self-scheduling to avoid overlap)
       console.log('[whisper] scheduling transcription loop (~500ms)');
@@ -683,7 +672,7 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       setError('Microphone access denied');
       setHasPermission(false);
     }
-  }, [detectPitch, calculateMetrics, options, transcribeAudio, isModelReady, loadModel, ensureBackendRecorder]);
+  }, [detectPitch, calculateMetrics, options, transcribeAudio, isModelReady, loadModel]);
 
   const stopAnalysis = useCallback(() => {
     if (animationFrameRef.current) {
