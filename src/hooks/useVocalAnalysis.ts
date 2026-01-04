@@ -678,9 +678,8 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
         processor.onaudioprocess = (e) => {
           debugRef.current.audioProcessCalls += 1;
 
-          // If we've switched to backend transcription, stop buffering PCM (avoid unnecessary memory use)
-          if (backendFallbackRef.current) return;
-
+          // Always buffer PCM for local Whisper on desktop (even if backend fallback was triggered
+          // previously due to quota errors — local model can still work).
           const input = e.inputBuffer.getChannelData(0);
           pcmChunksRef.current.push(new Float32Array(input));
 
