@@ -824,14 +824,10 @@ const Sing = () => {
           {isMicActive && (
             <div className="mb-4 p-3 bg-muted/50 rounded-lg border border-border/50">
               <p className="text-xs text-muted-foreground mb-1 flex items-center gap-2">
-                <span className={`w-2 h-2 rounded-full ${metrics.transcribedText ? 'bg-score-perfect' : 'bg-muted-foreground'} animate-pulse`} />
+                <span className={`w-2 h-2 rounded-full ${metrics.transcribedText && metrics.transcribedText !== '(transcribing...)' ? 'bg-score-perfect' : 'bg-muted-foreground'} animate-pulse`} />
                 {isTranscriptionDisabled
                   ? `Transcription disabled${transcriptionError ? `: ${transcriptionError}` : ''}`
-                  : isModelLoading
-                    ? `Loading Whisper (${loadProgress}%)...`
-                    : isModelReady
-                      ? 'Live transcription (local)'
-                      : 'Using backend transcription...'}
+                  : 'Live transcription (Speechmatics Hindi)'}
               </p>
               <p className="text-sm text-foreground italic truncate">
                 {metrics.transcribedText ? `"${metrics.transcribedText}"` : '(listening...)'}

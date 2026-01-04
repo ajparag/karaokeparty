@@ -11,3 +11,6 @@ verify_jwt = false
 
 [functions.transcribe-audio]
 verify_jwt = false
+
+[functions.speechmatics-transcribe]
+verify_jwt = false

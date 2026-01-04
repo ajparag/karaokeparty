@@ -191,25 +191,31 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     }
   }, []);
 
-  // Backend transcription for mobile devices (uses OpenAI Whisper API via edge function)
+  // Backend transcription using Speechmatics API (supports Hindi)
   const transcribeAudioBackend = useCallback(async () => {
     debugRef.current.transcriptionTicks += 1;
 
     if (backendTranscriptionDisabledRef.current) {
-      console.log('[backend-whisper] skip: backendTranscriptionDisabledRef=true');
+      console.log('[speechmatics] skip: backendTranscriptionDisabledRef=true');
       return;
     }
     if (transcriptionInFlightRef.current) {
-      console.log('[backend-whisper] skip: transcription already in flight');
+      console.log('[speechmatics] skip: transcription already in flight');
       return;
     }
     if (audioChunksRef.current.length === 0) {
-      console.log('[backend-whisper] skip: no audio chunks');
+      console.log('[speechmatics] skip: no audio chunks');
       return;
     }
 
     transcriptionInFlightRef.current = true;
-    console.log('[backend-whisper] transcriptionInFlightRef set to true, chunks:', audioChunksRef.current.length);
+    console.log('[speechmatics] transcriptionInFlightRef set to true, chunks:', audioChunksRef.current.length);
+
+    // Update UI to show transcription in progress
+    setMetrics((prev) => ({
+      ...prev,
+      transcribedText: prev.transcribedText || '(transcribing...)',
+    }));
 
     try {
       // Combine audio chunks into a single blob
@@ -217,21 +223,21 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       audioChunksRef.current = []; // Clear for next batch
       
       if (chunks.length === 0) {
-        console.log('[backend-whisper] skip: no chunks after copy');
+        console.log('[speechmatics] skip: no chunks after copy');
         return;
       }
 
       const audioBlob = new Blob(chunks, { type: 'audio/webm;codecs=opus' });
-      console.log('[backend-whisper] blob created', { size: audioBlob.size, chunkCount: chunks.length });
+      console.log('[speechmatics] blob created', { size: audioBlob.size, chunkCount: chunks.length });
 
-      // Need at least ~1 second of audio (rough estimate based on blob size)
-      if (audioBlob.size < 5000) {
-        console.log('[backend-whisper] skip: audio too short', { size: audioBlob.size });
+      // Need at least ~2 seconds of audio for meaningful transcription
+      if (audioBlob.size < 10000) {
+        console.log('[speechmatics] skip: audio too short', { size: audioBlob.size });
         return;
       }
 
       // Convert to base64 using FileReader with timeout
-      console.log('[backend-whisper] converting to base64...');
+      console.log('[speechmatics] converting to base64...');
       const base64 = await Promise.race([
         new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
@@ -248,42 +254,32 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
         )
       ]);
 
-      console.log('[backend-whisper] base64 ready, length:', base64.length);
+      console.log('[speechmatics] base64 ready, length:', base64.length);
 
-      console.log('[backend-whisper] calling edge function...');
-      const { data, error } = await supabase.functions.invoke('transcribe-audio', {
+      console.log('[speechmatics] calling edge function...');
+      const { data, error } = await supabase.functions.invoke('speechmatics-transcribe', {
         body: { audio: base64 }
       });
 
-      console.log('[backend-whisper] API response received', { data, error });
+      console.log('[speechmatics] API response received', { data, error });
 
       if (error) {
-        console.error('[backend-whisper] API error:', error);
+        console.error('[speechmatics] API error:', error);
+        setTranscriptionError('Speechmatics API error');
         return;
       }
 
       if (data?.error) {
         const msg = typeof data.error === 'string' ? data.error : 'Transcription error';
-        console.error('[backend-whisper] transcription error:', msg);
+        console.error('[speechmatics] transcription error:', msg);
         setTranscriptionError(msg);
-
-        // Quota/rate-limit: disable BACKEND only.
-        if (data.provider_status === 429 || data.provider_status === 402) {
-          backendTranscriptionDisabledRef.current = true;
-
-          // Only mark the UI "disabled" if we're currently relying on backend transcription.
-          if (isMobileRef.current || backendFallbackRef.current) {
-            setIsTranscriptionDisabled(true);
-          }
-        }
         return;
       }
 
       const rawText = data?.text?.trim() || '';
-      // Accept any non-empty transcription (backend now forces Hindi)
       const transcribedText = rawText;
 
-      console.log('[backend-whisper] result', { rawText, hasDevanagari: hasDevanagari(rawText) });
+      console.log('[speechmatics] result', { rawText, hasDevanagari: hasDevanagari(rawText) });
 
       if (transcribedText) {
         lastTranscribedTextRef.current = transcribedText;
@@ -306,205 +302,25 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
         transcribedText: lastTranscribedTextRef.current,
       }));
     } catch (err) {
-      console.error('[backend-whisper] transcribe failed:', err);
+      console.error('[speechmatics] transcribe failed:', err);
     } finally {
       transcriptionInFlightRef.current = false;
     }
   }, [options.expectedLyrics, calculateSimilarity]);
 
-  // Transcribe audio using local Whisper model (browser-based) - DESKTOP ONLY
+  // Transcribe audio using Speechmatics API (backend) - works on all devices
   const transcribeAudio = useCallback(async () => {
     const now = performance.now();
     const elapsed = analysisStartedAtRef.current ? now - analysisStartedAtRef.current : 0;
 
     console.log('[transcribeAudio] called', {
-      isMobile: isMobileRef.current,
-      backendFallback: backendFallbackRef.current,
       elapsed: Math.round(elapsed),
-      modelReady: checkModelReady(),
-      whisperLoading,
     });
 
-    // Skip on mobile - local Whisper only works on desktop
-    if (isMobileRef.current) {
-      console.log('[transcribeAudio] skip: mobile device, local Whisper only');
-      return;
-    }
-
-    debugRef.current.transcriptionTicks += 1;
-
-    if (localTranscriptionDisabledRef.current) {
-      console.log('[whisper] skip: localTranscriptionDisabledRef=true');
-      return;
-    }
-    if (transcriptionInFlightRef.current) {
-      console.log('[whisper] skip: transcription already in flight');
-      return;
-    }
-
-    if (!checkModelReady()) {
-      const now = performance.now();
-
-      // If we aren't currently loading, kick off a load attempt (throttled)
-      if (!whisperLoading && now - lastModelLoadAttemptAtRef.current > 3000) {
-        lastModelLoadAttemptAtRef.current = now;
-        console.log('[whisper] model not ready - triggering loadModel()');
-        loadModel()
-          .then((modelLoaded) => {
-            console.log('[whisper] loadModel(): done (from loop)', {
-              modelLoaded,
-              checkReady: checkModelReady(),
-            });
-
-            if (!modelLoaded) {
-              console.warn('[whisper] Model failed to load');
-            }
-          })
-          .catch((err) => {
-            console.error('[whisper] Model load error (from loop):', err);
-          });
-      }
-
-      // Just wait for model to load - no backend fallback
-      console.log('[whisper] skip: model not ready (ref check)', { elapsed: Math.round(elapsed) });
-      return;
-    }
-
-    if (pcmChunksRef.current.length === 0) {
-      console.log('[whisper] skip: no pcm chunks');
-      return;
-    }
-
-    transcriptionInFlightRef.current = true;
-
-    // Update UI to show transcription in progress
-    setMetrics((prev) => ({
-      ...prev,
-      transcribedText: prev.transcribedText || '(transcribing...)',
-    }));
-
-    try {
-      const sampleRate = inputSampleRateRef.current || 48000;
-      const mergedLength = pcmChunksRef.current.reduce((sum, c) => sum + c.length, 0);
-
-      console.log('[whisper] tick', debugRef.current.transcriptionTicks, {
-        pcmChunks: pcmChunksRef.current.length,
-        mergedLength,
-        sampleRate,
-      });
-
-      // Need ~0.75s minimum audio to be meaningful
-      if (mergedLength < sampleRate * 0.75) {
-        console.log('[whisper] skip: not enough audio yet', {
-          mergedLength,
-          minNeeded: Math.floor(sampleRate * 0.75),
-        });
-        return;
-      }
-
-      // Cap audio to last ~5 seconds to keep inference fast
-      const maxSamples = sampleRate * 5;
-      let samplesToUse = mergedLength;
-      let startChunkIndex = 0;
-
-      if (mergedLength > maxSamples) {
-        // Find where to start to get roughly the last 5 seconds
-        let runningTotal = 0;
-        for (let i = pcmChunksRef.current.length - 1; i >= 0; i--) {
-          runningTotal += pcmChunksRef.current[i].length;
-          if (runningTotal >= maxSamples) {
-            startChunkIndex = i;
-            samplesToUse = runningTotal;
-            break;
-          }
-        }
-        console.log('[whisper] capping audio to last ~5s', {
-          originalSamples: mergedLength,
-          usingSamples: samplesToUse,
-          startChunkIndex,
-        });
-      }
-
-      const merged = new Float32Array(samplesToUse);
-      let offset = 0;
-      for (let i = startChunkIndex; i < pcmChunksRef.current.length; i++) {
-        const chunk = pcmChunksRef.current[i];
-        merged.set(chunk, offset);
-        offset += chunk.length;
-      }
-      // Clear all chunks after processing
-      pcmChunksRef.current = [];
-
-      const audio16k = downsampleTo16k(merged, sampleRate);
-      console.log('[whisper] prepared audio', {
-        inSamples: merged.length,
-        outSamples: audio16k.length,
-        inSampleRate: sampleRate,
-        outSampleRate: 16000,
-      });
-
-      console.log('[whisper] calling model...');
-      
-      // Add timeout to prevent hanging - whisper-small needs up to 30s
-      const transcribeWithTimeout = Promise.race([
-        transcribe(audio16k),
-        new Promise<null>((_, reject) => 
-          setTimeout(() => reject(new Error('Whisper inference timeout (30s)')), 30000)
-        )
-      ]);
-      
-      let result;
-      try {
-        result = await transcribeWithTimeout;
-      } catch (timeoutErr) {
-        console.warn('[whisper] inference timed out, will retry next interval');
-        return;
-      }
-      
-      const rawText = result?.text?.trim() || '';
-
-      // Accept any non-empty transcription - model is configured for Hindi
-      const transcribedText = rawText;
-
-      console.log('[whisper] result', {
-        rawText,
-        hasDevanagari: hasDevanagari(rawText),
-      });
-
-      // Keep the last transcribed text around for display
-      if (transcribedText) {
-        lastTranscribedTextRef.current = transcribedText;
-      }
-
-      if (!transcribedText) return;
-
-
-      let dictionScore = 0;
-      if (options.expectedLyrics) {
-        dictionScore = calculateSimilarity(transcribedText, options.expectedLyrics);
-        console.log('[whisper] similarity-based diction', {
-          expected: options.expectedLyrics,
-          dictionScore,
-        });
-      } else {
-        const wordCount = transcribedText.split(/\s+/).filter(Boolean).length;
-        dictionScore = Math.min(85, 40 + wordCount * 8);
-        console.log('[whisper] wordcount-based diction', { wordCount, dictionScore });
-      }
-
-      lastDictionScoreRef.current = dictionScore;
-
-      setMetrics((prev) => ({
-        ...prev,
-        diction: dictionScore,
-        transcribedText: lastTranscribedTextRef.current,
-      }));
-    } catch (err) {
-      console.error('[whisper] transcribe failed:', err);
-    } finally {
-      transcriptionInFlightRef.current = false;
-    }
-  }, [checkModelReady, whisperLoading, loadModel, ensureBackendRecorder, transcribe, options.expectedLyrics, calculateSimilarity, downsampleTo16k, transcribeAudioBackend]);
+    // Use Speechmatics backend for all transcription
+    ensureBackendRecorder();
+    return transcribeAudioBackend();
+  }, [ensureBackendRecorder, transcribeAudioBackend]);
 
   const detectPitch = useCallback((frequencyData: Uint8Array, sampleRate: number): number => {
     let maxIndex = 0;
