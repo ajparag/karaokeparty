@@ -43,6 +43,7 @@ export function ScoreDisplay({ score, rating, size = 'md', showRating = true }: 
 
   const getRatingColor = (r: string) => {
     switch (r) {
+      case 'L': return 'text-score-s';
       case 'S': return 'text-score-s';
       case 'A': return 'text-score-a';
       case 'B': return 'text-score-b';
@@ -55,6 +56,7 @@ export function ScoreDisplay({ score, rating, size = 'md', showRating = true }: 
 
   const getRatingBg = (r: string) => {
     switch (r) {
+      case 'L': return 'bg-score-s/20 shadow-[0_0_35px_hsl(var(--score-s)/0.5)]';
       case 'S': return 'bg-score-s/20 shadow-[0_0_30px_hsl(var(--score-s)/0.4)]';
       case 'A': return 'bg-score-a/20 shadow-[0_0_25px_hsl(var(--score-a)/0.3)]';
       case 'B': return 'bg-score-b/20 shadow-[0_0_20px_hsl(var(--score-b)/0.3)]';
@@ -67,11 +69,12 @@ export function ScoreDisplay({ score, rating, size = 'md', showRating = true }: 
 
   // Rating thresholds for 1000-point scale
   const calculateRating = (s: number) => {
-    if (s >= 950) return 'S';
-    if (s >= 850) return 'A';
-    if (s >= 700) return 'B';
-    if (s >= 550) return 'C';
-    if (s >= 400) return 'D';
+    if (s >= 900) return 'L';
+    if (s >= 800) return 'S';
+    if (s >= 700) return 'A';
+    if (s >= 600) return 'B';
+    if (s >= 500) return 'C';
+    if (s >= 300) return 'D';
     return 'F';
   };
 

@@ -10,10 +10,11 @@ interface CelebrationOverlayProps {
 }
 
 const messages: Record<string, { title: string; subtitle: string; icon: React.ElementType }> = {
-  S: { title: 'LEGENDARY!', subtitle: 'You are a superstar!', icon: Trophy },
-  A: { title: 'AMAZING!', subtitle: 'Outstanding performance!', icon: Star },
-  B: { title: 'GREAT JOB!', subtitle: 'You nailed it!', icon: Medal },
-  C: { title: 'NICE WORK!', subtitle: 'Keep practicing!', icon: Award },
+  L: { title: 'LEGENDARY!', subtitle: 'You are a superstar!', icon: Trophy },
+  S: { title: 'SUPERB!', subtitle: 'Outstanding performance!', icon: Star },
+  A: { title: 'AMAZING!', subtitle: 'You nailed it!', icon: Medal },
+  B: { title: 'GREAT JOB!', subtitle: 'Impressive skills!', icon: Award },
+  C: { title: 'NICE WORK!', subtitle: 'Keep practicing!', icon: ThumbsUp },
   D: { title: 'GOOD EFFORT!', subtitle: 'You can do better!', icon: ThumbsUp },
   F: { title: 'KEEP TRYING!', subtitle: 'Practice makes perfect!', icon: Sparkles },
 };
