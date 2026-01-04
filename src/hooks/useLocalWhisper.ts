@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback } from 'react';
 
-const WHISPER_MODEL_ID = 'onnx-community/whisper-tiny';
+const WHISPER_MODEL_ID = 'onnx-community/whisper-base';
 const WHISPER_LANGUAGE_PRIMARY = 'hi';
 const WHISPER_LANGUAGE_FALLBACK = 'hindi';
 
