@@ -32,7 +32,11 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
   const [isActive, setIsActive] = useState(false);
   const [hasPermission, setHasPermission] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Transcription can fail independently of mic access (e.g. provider quota)
   const [isTranscriptionDisabled, setIsTranscriptionDisabled] = useState(false);
+  const [transcriptionError, setTranscriptionError] = useState<string | null>(null);
+
   const [isModelLoading, setIsModelLoading] = useState(false);
   const [metrics, setMetrics] = useState<VocalMetrics>({
     pitch: 0,
@@ -64,7 +68,11 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
   const lastDictionScoreRef = useRef<number>(0);
   const lastTranscribedTextRef = useRef<string>('');
   const transcriptionInFlightRef = useRef(false);
-  const transcriptionDisabledRef = useRef(false);
+
+  // Keep backend quota/limits from disabling the local (desktop) model.
+  const backendTranscriptionDisabledRef = useRef(false);
+  const localTranscriptionDisabledRef = useRef(false);
+
   const isMobileRef = useRef(isMobileDevice());
 
   // If local Whisper can't be loaded (or takes too long), fall back to backend transcription.
@@ -187,8 +195,8 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
   const transcribeAudioBackend = useCallback(async () => {
     debugRef.current.transcriptionTicks += 1;
 
-    if (transcriptionDisabledRef.current) {
-      console.log('[backend-whisper] skip: transcriptionDisabledRef=true');
+    if (backendTranscriptionDisabledRef.current) {
+      console.log('[backend-whisper] skip: backendTranscriptionDisabledRef=true');
       return;
     }
     if (transcriptionInFlightRef.current) {
@@ -255,11 +263,18 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       }
 
       if (data?.error) {
-        console.error('[backend-whisper] transcription error:', data.error);
-        // If quota exceeded, disable transcription
+        const msg = typeof data.error === 'string' ? data.error : 'Transcription error';
+        console.error('[backend-whisper] transcription error:', msg);
+        setTranscriptionError(msg);
+
+        // Quota/rate-limit: disable BACKEND only.
         if (data.provider_status === 429 || data.provider_status === 402) {
-          transcriptionDisabledRef.current = true;
-          setIsTranscriptionDisabled(true);
+          backendTranscriptionDisabledRef.current = true;
+
+          // Only mark the UI "disabled" if we're currently relying on backend transcription.
+          if (isMobileRef.current || backendFallbackRef.current) {
+            setIsTranscriptionDisabled(true);
+          }
         }
         return;
       }
@@ -310,25 +325,23 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       whisperLoading,
     });
 
-    // FORCE BACKEND for testing - skip local Whisper entirely
-    // TODO: Remove this after debugging
-    if (true) {
-      console.log('[transcribeAudio] FORCED backend path for testing');
-      ensureBackendRecorder();
-      return transcribeAudioBackend();
-    }
-
     // On mobile (and when local model isn't available), use backend transcription instead
     if (isMobileRef.current || backendFallbackRef.current) {
       console.log('[transcribeAudio] using backend path');
+
+      if (backendTranscriptionDisabledRef.current) {
+        setIsTranscriptionDisabled(true);
+        return;
+      }
+
       ensureBackendRecorder();
       return transcribeAudioBackend();
     }
 
     debugRef.current.transcriptionTicks += 1;
 
-    if (transcriptionDisabledRef.current) {
-      console.log('[whisper] skip: transcriptionDisabledRef=true');
+    if (localTranscriptionDisabledRef.current) {
+      console.log('[whisper] skip: localTranscriptionDisabledRef=true');
       return;
     }
     if (transcriptionInFlightRef.current) {
@@ -588,6 +601,11 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       lastDictionScoreRef.current = 0;
       setMetrics((prev) => ({ ...prev, diction: 0, transcribedText: '' }));
 
+      setIsTranscriptionDisabled(false);
+      setTranscriptionError(null);
+      backendTranscriptionDisabledRef.current = false;
+      localTranscriptionDisabledRef.current = false;
+
       analysisStartedAtRef.current = performance.now();
       lastModelLoadAttemptAtRef.current = 0;
       backendFallbackRef.current = false;
@@ -646,9 +664,11 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
         backendFallbackRef.current = true;
         const ok = ensureBackendRecorder();
         if (!ok) {
-          console.warn('[backend-whisper] MediaRecorder not supported; transcription disabled');
-          transcriptionDisabledRef.current = true;
+          const msg = 'MediaRecorder not supported in this browser';
+          console.warn('[backend-whisper] ' + msg);
+          backendTranscriptionDisabledRef.current = true;
           setIsTranscriptionDisabled(true);
+          setTranscriptionError(msg);
         }
       } else {
         // DESKTOP: Capture raw PCM for local Whisper (more reliable than MediaRecorder/webm decoding)
@@ -810,8 +830,10 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
 
   // Retry transcription - resets disabled state and restarts loop
   const retryTranscription = useCallback(async () => {
-    transcriptionDisabledRef.current = false;
+    backendTranscriptionDisabledRef.current = false;
+    localTranscriptionDisabledRef.current = false;
     setIsTranscriptionDisabled(false);
+    setTranscriptionError(null);
 
     // Clear any existing timer
     if (transcriptionIntervalRef.current) {
@@ -871,6 +893,7 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     error,
     metrics,
     isTranscriptionDisabled,
+    transcriptionError,
     isModelLoading,
     loadProgress,
     isModelReady,
