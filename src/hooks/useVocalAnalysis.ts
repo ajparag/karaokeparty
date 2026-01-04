@@ -230,9 +230,13 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       const audioBlob = new Blob(chunks, { type: 'audio/webm;codecs=opus' });
       console.log('[speechmatics] blob created', { size: audioBlob.size, chunkCount: chunks.length });
 
-      // Need at least ~2 seconds of audio for meaningful transcription
-      if (audioBlob.size < 10000) {
-        console.log('[speechmatics] skip: audio too short', { size: audioBlob.size });
+      // Speechmatics batch API needs at least 3-5 seconds of audio
+      // ~8KB per 500ms chunk, so need ~50KB+ for reliable transcription
+      if (audioBlob.size < 50000) {
+        console.log('[speechmatics] skip: audio too short for batch API', { size: audioBlob.size });
+        // Put chunks back for next round
+        audioChunksRef.current = [...chunks, ...audioChunksRef.current];
+        transcriptionInFlightRef.current = false;
         return;
       }
 

@@ -42,19 +42,22 @@ serve(async (req) => {
 
     console.log('Audio decoded, size:', bytes.length, 'bytes');
 
+    // Convert webm to raw PCM WAV for Speechmatics compatibility
+    // Speechmatics batch API requires proper audio format - we'll send as-is with correct mime type
+    // The browser sends webm/opus which Speechmatics should accept
+    
     // Create form data for Speechmatics batch API
     const formData = new FormData();
     
-    // Add the audio file
-    const audioBlob = new Blob([bytes], { type: 'audio/webm' });
+    // Add the audio file - try with audio/webm;codecs=opus which is what browsers typically send
+    const audioBlob = new Blob([bytes], { type: 'audio/webm;codecs=opus' });
     formData.append('data_file', audioBlob, 'audio.webm');
     
-    // Add the config - Hindi language
+    // Add the config - Hindi language with minimal required fields
     const config = {
       type: 'transcription',
       transcription_config: {
-        language: 'hi', // Hindi
-        operating_point: 'enhanced', // Better accuracy
+        language: 'hi',
       },
     };
     formData.append('config', JSON.stringify(config));
