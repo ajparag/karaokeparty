@@ -80,8 +80,8 @@ const Sing = () => {
   const scoreAccumulatorRef = useRef({ pitch: 0, rhythm: 0, diction: 0, count: 0 });
   const lastScoreSampleAtRef = useRef(0);
 
-  // Weights (must sum to 1.0): Diction 50%, Pitch 30%, Rhythm 20%
-  const SCORE_WEIGHTS = useRef({ pitch: 0.3, diction: 0.5, rhythm: 0.2 }).current;
+  // Weights (must sum to 1.0): Pitch 50%, Diction 30%, Rhythm 20%
+  const SCORE_WEIGHTS = useRef({ pitch: 0.5, diction: 0.3, rhythm: 0.2 }).current;
 
   const {
     isActive: isMicActive,
