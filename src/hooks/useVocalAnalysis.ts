@@ -201,13 +201,20 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     }
 
     transcriptionInFlightRef.current = true;
-    console.log('[backend-whisper] transcriptionInFlightRef set to true');
+    console.log('[backend-whisper] transcriptionInFlightRef set to true, chunks:', audioChunksRef.current.length);
 
     try {
       // Combine audio chunks into a single blob
-      const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm;codecs=opus' });
-      const chunkCount = audioChunksRef.current.length;
+      const chunks = [...audioChunksRef.current]; // Copy before clearing
       audioChunksRef.current = []; // Clear for next batch
+      
+      if (chunks.length === 0) {
+        console.log('[backend-whisper] skip: no chunks after copy');
+        return;
+      }
+
+      const audioBlob = new Blob(chunks, { type: 'audio/webm;codecs=opus' });
+      console.log('[backend-whisper] blob created', { size: audioBlob.size, chunkCount: chunks.length });
 
       // Need at least ~1 second of audio (rough estimate based on blob size)
       if (audioBlob.size < 5000) {
@@ -215,23 +222,27 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
         return;
       }
 
-      console.log('[backend-whisper] preparing to send', { size: audioBlob.size, chunks: chunkCount });
-
-      // Convert to base64 using FileReader (handles large arrays safely)
-      const base64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          const dataUrl = reader.result as string;
-          // Remove the "data:audio/webm;codecs=opus;base64," prefix
-          const base64Data = dataUrl.split(',')[1] || '';
-          resolve(base64Data);
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(audioBlob);
-      });
+      // Convert to base64 using FileReader with timeout
+      console.log('[backend-whisper] converting to base64...');
+      const base64 = await Promise.race([
+        new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const dataUrl = reader.result as string;
+            const base64Data = dataUrl.split(',')[1] || '';
+            resolve(base64Data);
+          };
+          reader.onerror = () => reject(new Error('FileReader error'));
+          reader.readAsDataURL(audioBlob);
+        }),
+        new Promise<never>((_, reject) => 
+          setTimeout(() => reject(new Error('base64 conversion timeout')), 5000)
+        )
+      ]);
 
       console.log('[backend-whisper] base64 ready, length:', base64.length);
 
+      console.log('[backend-whisper] calling edge function...');
       const { data, error } = await supabase.functions.invoke('transcribe-audio', {
         body: { audio: base64 }
       });
