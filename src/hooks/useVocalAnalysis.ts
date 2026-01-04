@@ -396,6 +396,12 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
 
     transcriptionInFlightRef.current = true;
 
+    // Update UI to show transcription in progress
+    setMetrics((prev) => ({
+      ...prev,
+      transcribedText: prev.transcribedText || '(transcribing...)',
+    }));
+
     try {
       const sampleRate = inputSampleRateRef.current || 48000;
       const mergedLength = pcmChunksRef.current.reduce((sum, c) => sum + c.length, 0);
@@ -415,12 +421,37 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
         return;
       }
 
-      const merged = new Float32Array(mergedLength);
+      // Cap audio to last ~5 seconds to keep inference fast
+      const maxSamples = sampleRate * 5;
+      let samplesToUse = mergedLength;
+      let startChunkIndex = 0;
+
+      if (mergedLength > maxSamples) {
+        // Find where to start to get roughly the last 5 seconds
+        let runningTotal = 0;
+        for (let i = pcmChunksRef.current.length - 1; i >= 0; i--) {
+          runningTotal += pcmChunksRef.current[i].length;
+          if (runningTotal >= maxSamples) {
+            startChunkIndex = i;
+            samplesToUse = runningTotal;
+            break;
+          }
+        }
+        console.log('[whisper] capping audio to last ~5s', {
+          originalSamples: mergedLength,
+          usingSamples: samplesToUse,
+          startChunkIndex,
+        });
+      }
+
+      const merged = new Float32Array(samplesToUse);
       let offset = 0;
-      for (const chunk of pcmChunksRef.current) {
+      for (let i = startChunkIndex; i < pcmChunksRef.current.length; i++) {
+        const chunk = pcmChunksRef.current[i];
         merged.set(chunk, offset);
         offset += chunk.length;
       }
+      // Clear all chunks after processing
       pcmChunksRef.current = [];
 
       const audio16k = downsampleTo16k(merged, sampleRate);
