@@ -184,10 +184,10 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       }
 
       const rawText = data?.text?.trim() || '';
-      // Accept Devanagari or any Hindi text from backend
-      const transcribedText = rawText && hasDevanagari(rawText) ? rawText : '';
+      // Accept any non-empty transcription (backend now forces Hindi)
+      const transcribedText = rawText;
 
-      console.log('[backend-whisper] result', { rawText, acceptedForDisplay: Boolean(transcribedText) });
+      console.log('[backend-whisper] result', { rawText, hasDevanagari: hasDevanagari(rawText) });
 
       if (transcribedText) {
         lastTranscribedTextRef.current = transcribedText;
@@ -283,15 +283,15 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       const result = await transcribe(audio16k);
       const rawText = result?.text?.trim() || '';
 
-      // Only accept Devanagari output for display; ignore English/romanized hallucinations.
-      const transcribedText = rawText && hasDevanagari(rawText) ? rawText : '';
+      // Accept any non-empty transcription - model is configured for Hindi
+      const transcribedText = rawText;
 
       console.log('[whisper] result', {
         rawText,
-        acceptedForDisplay: Boolean(transcribedText),
+        hasDevanagari: hasDevanagari(rawText),
       });
 
-      // Keep the last *Hindi (Devanagari)* text around so the UI doesn't get polluted with English.
+      // Keep the last transcribed text around for display
       if (transcribedText) {
         lastTranscribedTextRef.current = transcribedText;
       }
