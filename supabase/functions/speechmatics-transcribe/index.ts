@@ -55,8 +55,6 @@ serve(async (req) => {
       transcription_config: {
         language: 'hi', // Hindi
         operating_point: 'enhanced', // Better accuracy
-        enable_partials: false,
-        max_delay: 2,
       },
     };
     formData.append('config', JSON.stringify(config));
