@@ -448,8 +448,8 @@ const Sing = () => {
       const avgRhythm = scoreAccumulatorRef.current.count > 0 
         ? scoreAccumulatorRef.current.rhythm / scoreAccumulatorRef.current.count : 0;
 
-      const rating = totalScore >= 900 ? 'S' : totalScore >= 800 ? 'A' : totalScore >= 700 ? 'B' : 
-                     totalScore >= 600 ? 'C' : totalScore >= 500 ? 'D' : 'F';
+      const rating = totalScore >= 900 ? 'L' : totalScore >= 800 ? 'S' : totalScore >= 700 ? 'A' : 
+                     totalScore >= 600 ? 'B' : totalScore >= 500 ? 'C' : totalScore >= 300 ? 'D' : 'F';
 
       const { error } = await supabase.from('scores').insert({
         user_id: user.id,
@@ -484,11 +484,12 @@ const Sing = () => {
   };
 
   const getRating = (score: number) => {
-    if (score >= 900) return { letter: 'S', color: 'text-score-perfect' };
-    if (score >= 800) return { letter: 'A', color: 'text-score-great' };
-    if (score >= 700) return { letter: 'B', color: 'text-score-good' };
-    if (score >= 600) return { letter: 'C', color: 'text-score-ok' };
-    if (score >= 500) return { letter: 'D', color: 'text-score-ok' };
+    if (score >= 900) return { letter: 'L', color: 'text-score-perfect' };
+    if (score >= 800) return { letter: 'S', color: 'text-score-perfect' };
+    if (score >= 700) return { letter: 'A', color: 'text-score-great' };
+    if (score >= 600) return { letter: 'B', color: 'text-score-good' };
+    if (score >= 500) return { letter: 'C', color: 'text-score-ok' };
+    if (score >= 300) return { letter: 'D', color: 'text-score-ok' };
     return { letter: 'F', color: 'text-score-miss' };
   };
 

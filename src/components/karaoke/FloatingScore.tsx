@@ -9,16 +9,18 @@ interface FloatingScoreProps {
 
 export function FloatingScore({ score, pitchAccuracy, rhythmAccuracy, className }: FloatingScoreProps) {
   const getRating = (s: number) => {
-    if (s >= 950) return 'S';
-    if (s >= 850) return 'A';
-    if (s >= 700) return 'B';
-    if (s >= 550) return 'C';
-    if (s >= 400) return 'D';
+    if (s >= 900) return 'L';
+    if (s >= 800) return 'S';
+    if (s >= 700) return 'A';
+    if (s >= 600) return 'B';
+    if (s >= 500) return 'C';
+    if (s >= 300) return 'D';
     return 'F';
   };
 
   const getRatingColor = (r: string) => {
     switch (r) {
+      case 'L': return 'from-purple-400 to-pink-500';
       case 'S': return 'from-yellow-400 to-amber-500';
       case 'A': return 'from-green-400 to-emerald-500';
       case 'B': return 'from-blue-400 to-cyan-500';
