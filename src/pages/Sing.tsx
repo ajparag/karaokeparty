@@ -824,10 +824,13 @@ const Sing = () => {
             <div className="mb-4 p-3 bg-muted/50 rounded-lg border border-border/50">
               <p className="text-xs text-muted-foreground mb-1 flex items-center gap-2">
                 <span className={`w-2 h-2 rounded-full ${metrics.transcribedText ? 'bg-score-perfect' : 'bg-muted-foreground'} animate-pulse`} />
-                {isModelLoading ? `Loading Whisper (${loadProgress}%)...` : isModelReady ? 'Live transcription' : 'Waiting for model...'}
+                {isModelLoading ? `Loading Whisper (${loadProgress}%)...` : isModelReady ? 'Live transcription (local)' : 'Using backend transcription...'}
               </p>
               <p className="text-sm text-foreground italic truncate">
                 {metrics.transcribedText ? `"${metrics.transcribedText}"` : '(listening...)'}
+              </p>
+              <p className="text-xs text-muted-foreground/70 mt-1">
+                Diction: {metrics.diction} | Voice: {metrics.isVoiceDetected ? 'Yes' : 'No'}
               </p>
             </div>
           )}
