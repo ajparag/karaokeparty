@@ -325,17 +325,10 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       whisperLoading,
     });
 
-    // On mobile (and when local model isn't available), use backend transcription instead
-    if (isMobileRef.current || backendFallbackRef.current) {
-      console.log('[transcribeAudio] using backend path');
-
-      if (backendTranscriptionDisabledRef.current) {
-        setIsTranscriptionDisabled(true);
-        return;
-      }
-
-      ensureBackendRecorder();
-      return transcribeAudioBackend();
+    // Skip on mobile - local Whisper only works on desktop
+    if (isMobileRef.current) {
+      console.log('[transcribeAudio] skip: mobile device, local Whisper only');
+      return;
     }
 
     debugRef.current.transcriptionTicks += 1;
@@ -364,27 +357,15 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
             });
 
             if (!modelLoaded) {
-              console.warn('[whisper] Model failed to load - falling back to backend transcription');
-              backendFallbackRef.current = true;
-              ensureBackendRecorder();
+              console.warn('[whisper] Model failed to load');
             }
           })
           .catch((err) => {
             console.error('[whisper] Model load error (from loop):', err);
-            backendFallbackRef.current = true;
-            ensureBackendRecorder();
           });
       }
 
-      // Hard fallback: if model isn't ready after ~8s, switch to backend so UI isn't stuck on "listening"
-      if (analysisStartedAtRef.current && elapsed > 8000) {
-        console.warn('[whisper] Model still not ready after 8s - using backend transcription');
-        backendFallbackRef.current = true;
-        const ok = ensureBackendRecorder();
-        console.log('[whisper] ensureBackendRecorder result:', ok);
-        return transcribeAudioBackend();
-      }
-
+      // Just wait for model to load - no backend fallback
       console.log('[whisper] skip: model not ready (ref check)', { elapsed: Math.round(elapsed) });
       return;
     }
