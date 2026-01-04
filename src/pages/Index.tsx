@@ -63,12 +63,28 @@ const Index = () => {
   const [trendingSongs, setTrendingSongs] = useState<string[]>([]);
   const [isLoadingTrending, setIsLoadingTrending] = useState(true);
 
-  // Fetch trending Hindi songs on mount
+  // Fetch trending Hindi songs on mount with randomized queries
   useEffect(() => {
+    const trendingQueries = [
+      'new hindi songs 2024',
+      'latest bollywood hits',
+      'trending hindi songs',
+      'top hindi songs 2024',
+      'bollywood new releases',
+      'hindi chart toppers',
+      'latest arijit singh songs',
+      'new romantic hindi songs',
+      'bollywood party songs 2024',
+      'hindi love songs new'
+    ];
+    
     const fetchTrending = async () => {
       try {
+        // Pick a random query for variety
+        const randomQuery = trendingQueries[Math.floor(Math.random() * trendingQueries.length)];
+        
         const { data, error } = await supabase.functions.invoke('search-music', {
-          body: { query: 'latest hindi songs 2024', limit: 10 }
+          body: { query: randomQuery, limit: 10 }
         });
         
         if (!error && data?.tracks?.length > 0) {
