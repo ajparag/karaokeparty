@@ -463,7 +463,23 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       });
 
       console.log('[whisper] calling model...');
-      const result = await transcribe(audio16k);
+      
+      // Add timeout to prevent hanging - whisper-base should complete in <15s
+      const transcribeWithTimeout = Promise.race([
+        transcribe(audio16k),
+        new Promise<null>((_, reject) => 
+          setTimeout(() => reject(new Error('Whisper inference timeout (15s)')), 15000)
+        )
+      ]);
+      
+      let result;
+      try {
+        result = await transcribeWithTimeout;
+      } catch (timeoutErr) {
+        console.warn('[whisper] inference timed out, will retry next interval');
+        return;
+      }
+      
       const rawText = result?.text?.trim() || '';
 
       // Accept any non-empty transcription - model is configured for Hindi
