@@ -1,25 +1,15 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { useLocalWhisper } from './useLocalWhisper';
-import { supabase } from '@/integrations/supabase/client';
 
 const hasDevanagari = (text: string) => /[\u0900-\u097F]/.test(text);
-
-// Simple mobile detection to avoid loading heavy Whisper model on phones
-const isMobileDevice = () => {
-  if (typeof window === 'undefined') return false;
-  const ua = navigator.userAgent || '';
-  // IMPORTANT: do NOT use viewport width here; it incorrectly treats narrow desktop windows as mobile.
-  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
-};
 
 interface VocalMetrics {
   pitch: number;           // Current detected pitch in Hz
   pitchAccuracy: number;   // 0-100 accuracy score
   rhythm: number;          // 0-100 rhythm consistency
-  diction: number;         // 0-100 clarity score (based on Whisper transcription)
+  diction: number;         // 0-100 clarity score (based on transcription)
   volume: number;          // Current volume level 0-1
   isVoiceDetected: boolean;
-  transcribedText?: string; // Latest transcribed text from Whisper
+  transcribedText?: string; // Latest transcribed text
 }
 
 interface UseVocalAnalysisOptions {
@@ -33,11 +23,10 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
   const [hasPermission, setHasPermission] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Transcription can fail independently of mic access (e.g. provider quota)
   const [isTranscriptionDisabled, setIsTranscriptionDisabled] = useState(false);
   const [transcriptionError, setTranscriptionError] = useState<string | null>(null);
-
   const [isModelLoading, setIsModelLoading] = useState(false);
+
   const [metrics, setMetrics] = useState<VocalMetrics>({
     pitch: 0,
     pitchAccuracy: 0,
@@ -48,71 +37,35 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     transcribedText: '',
   });
 
-  // Local Whisper hook for browser-based transcription
-  const { 
-    isModelReady, 
-    isModelLoading: whisperLoading, 
-    loadProgress,
-    loadModel, 
-    transcribe, 
-    dispose,
-    checkModelReady,
-  } = useLocalWhisper();
-
+  // Audio analysis refs
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const animationFrameRef = useRef<number | null>(null);
 
-  const transcriptionIntervalRef = useRef<number | null>(null);
+  // WebSocket transcription refs
+  const wsRef = useRef<WebSocket | null>(null);
+  const wsConnectedRef = useRef(false);
+  const wsProcessorRef = useRef<ScriptProcessorNode | null>(null);
+  const wsSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const inputSampleRateRef = useRef<number>(48000);
+
+  // Scoring refs
   const lastDictionScoreRef = useRef<number>(0);
   const lastTranscribedTextRef = useRef<string>('');
-  const transcriptionInFlightRef = useRef(false);
-
-  // Keep backend quota/limits from disabling the local (desktop) model.
-  const backendTranscriptionDisabledRef = useRef(false);
-  const localTranscriptionDisabledRef = useRef(false);
-
-  const isMobileRef = useRef(isMobileDevice());
-
-  // If local Whisper can't be loaded (or takes too long), fall back to backend transcription.
-  const backendFallbackRef = useRef(false);
-  const analysisStartedAtRef = useRef(0);
-  const lastModelLoadAttemptAtRef = useRef(0);
-
-  // Raw PCM capture for Whisper (avoids webm decode issues)
-  const processorRef = useRef<ScriptProcessorNode | null>(null);
-  const pcmChunksRef = useRef<Float32Array[]>([]);
-  const inputSampleRateRef = useRef<number>(0);
-  
-  // MediaRecorder for mobile backend transcription (webm/opus format)
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
-
-  // Debug counters (helps trace why transcription text might not appear)
-  const debugRef = useRef({
-    audioProcessCalls: 0,
-    lastAudioProcessLogAt: 0,
-    transcriptionTicks: 0,
-  });
-  
-  // Tracking for scoring
   const pitchHistoryRef = useRef<number[]>([]);
   const volumeHistoryRef = useRef<number[]>([]);
   const beatTimesRef = useRef<number[]>([]);
   const lastBeatTimeRef = useRef<number>(0);
+  const intermediateDictionRef = useRef<number>(0);
+  const lastVoiceActivityRef = useRef<number>(0);
 
-  // Update loading state from whisper hook
-  useEffect(() => {
-    setIsModelLoading(whisperLoading);
-  }, [whisperLoading]);
-
-  // Calculate similarity between two strings (Levenshtein-based)
+  // Calculate similarity between two strings
   const calculateSimilarity = useCallback((str1: string, str2: string): number => {
     if (!str1 || !str2) return 0;
     
-    const s1 = str1.toLowerCase().replace(/[^\w\s]/g, '').trim();
-    const s2 = str2.toLowerCase().replace(/[^\w\s]/g, '').trim();
+    const s1 = str1.toLowerCase().replace(/[^\\w\\s\\u0900-\\u097F]/g, '').trim();
+    const s2 = str2.toLowerCase().replace(/[^\\w\\s\\u0900-\\u097F]/g, '').trim();
     
     if (s1 === s2) return 100;
     if (!s1 || !s2) return 0;
@@ -130,285 +83,146 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     return Math.round((matches / Math.max(words1.length, 1)) * 100);
   }, []);
 
-  const downsampleTo16k = useCallback((input: Float32Array, sampleRate: number) => {
-    if (sampleRate === 16000) return input;
-    const ratio = sampleRate / 16000;
-    const newLength = Math.floor(input.length / ratio);
-    const output = new Float32Array(newLength);
+  // Downsample audio to 16kHz for Speechmatics
+  const downsampleBuffer = useCallback((buffer: Float32Array, inputSampleRate: number): Int16Array => {
+    const targetSampleRate = 16000;
+    const ratio = inputSampleRate / targetSampleRate;
+    const newLength = Math.floor(buffer.length / ratio);
+    const result = new Int16Array(newLength);
+
     for (let i = 0; i < newLength; i++) {
-      output[i] = input[Math.floor(i * ratio)];
+      const srcIndex = Math.floor(i * ratio);
+      const s = Math.max(-1, Math.min(1, buffer[srcIndex]));
+      result[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
     }
-    return output;
+
+    return result;
   }, []);
 
-  const encodeWavPcm16 = useCallback((samples: Float32Array, sampleRate: number) => {
-    // 16-bit PCM mono WAV
-    const bytesPerSample = 2;
-    const blockAlign = bytesPerSample * 1;
-    const buffer = new ArrayBuffer(44 + samples.length * bytesPerSample);
-    const view = new DataView(buffer);
+  // Handle transcription updates from WebSocket
+  const handleTranscript = useCallback((text: string, isFinal: boolean) => {
+    if (!text) return;
 
-    const writeString = (offset: number, s: string) => {
-      for (let i = 0; i < s.length; i++) view.setUint8(offset + i, s.charCodeAt(i));
+    console.log('[ws-transcribe]', isFinal ? 'FINAL:' : 'partial:', text.substring(0, 50));
+
+    lastTranscribedTextRef.current = text;
+
+    let dictionScore = 0;
+    if (options.expectedLyrics) {
+      dictionScore = calculateSimilarity(text, options.expectedLyrics);
+    } else {
+      const wordCount = text.split(/\s+/).filter(Boolean).length;
+      dictionScore = Math.min(85, 40 + wordCount * 8);
+    }
+
+    if (isFinal) {
+      lastDictionScoreRef.current = dictionScore;
+    }
+
+    setMetrics((prev) => ({
+      ...prev,
+      diction: Math.max(dictionScore, prev.diction * 0.9),
+      transcribedText: text,
+    }));
+  }, [options.expectedLyrics, calculateSimilarity]);
+
+  // Connect to Speechmatics real-time WebSocket
+  const connectWebSocket = useCallback(() => {
+    if (wsRef.current) return;
+
+    console.log('[ws] Connecting to Speechmatics real-time...');
+    setIsModelLoading(true);
+
+    const wsUrl = `wss://wnfgqlywaecvbptjvktt.functions.supabase.co/speechmatics-realtime`;
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      console.log('[ws] WebSocket opened, waiting for recognition...');
     };
 
-    writeString(0, 'RIFF');
-    view.setUint32(4, 36 + samples.length * bytesPerSample, true);
-    writeString(8, 'WAVE');
-    writeString(12, 'fmt ');
-    view.setUint32(16, 16, true); // PCM fmt chunk size
-    view.setUint16(20, 1, true); // audio format = PCM
-    view.setUint16(22, 1, true); // channels = 1
-    view.setUint32(24, sampleRate, true);
-    view.setUint32(28, sampleRate * blockAlign, true); // byte rate
-    view.setUint16(32, blockAlign, true);
-    view.setUint16(34, 16, true); // bits per sample
-    writeString(36, 'data');
-    view.setUint32(40, samples.length * bytesPerSample, true);
-
-    let offset = 44;
-    for (let i = 0; i < samples.length; i++) {
-      const s = Math.max(-1, Math.min(1, samples[i]));
-      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-      offset += 2;
-    }
-
-    return buffer;
-  }, []);
-
-  const transcodeWebmToWav16kMono = useCallback(async (webmBlob: Blob) => {
-    const arrayBuffer = await webmBlob.arrayBuffer();
-
-    // Try to decode with WebAudio; most Chromium browsers can decode webm/opus.
-    const AudioContextCtor = window.AudioContext || (window as any).webkitAudioContext;
-    const ctx: AudioContext = new AudioContextCtor({ sampleRate: 16000 } as any);
-
-    try {
-      const decoded = await ctx.decodeAudioData(arrayBuffer.slice(0));
-      const sampleRate = decoded.sampleRate;
-
-      // Downmix to mono
-      const ch0 = decoded.getChannelData(0);
-      let mono = new Float32Array(ch0.length);
-      if (decoded.numberOfChannels === 1) {
-        mono.set(ch0);
-      } else {
-        const ch1 = decoded.getChannelData(1);
-        for (let i = 0; i < mono.length; i++) mono[i] = (ch0[i] + ch1[i]) / 2;
-      }
-
-      // Downsample to 16kHz
-      const mono16k = downsampleTo16k(mono, sampleRate);
-      const wavBuffer = encodeWavPcm16(mono16k, 16000);
-      return new Blob([wavBuffer], { type: 'audio/wav' });
-    } finally {
+    ws.onmessage = (event) => {
       try {
-        await ctx.close();
-      } catch {
-        // ignore
-      }
-    }
-  }, [downsampleTo16k, encodeWavPcm16]);
+        const data = JSON.parse(event.data);
+        
+        if (data.type === 'connected') {
+          console.log('[ws] Recognition started!');
+          wsConnectedRef.current = true;
+          setIsModelLoading(false);
+          setTranscriptionError(null);
 
-  const ensureBackendRecorder = useCallback(() => {
-    const stream = streamRef.current;
-    if (!stream) {
-      console.log('[backend-whisper] ensureBackendRecorder: no stream');
-      return false;
-    }
-
-    // Already running
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      console.log('[backend-whisper] ensureBackendRecorder: already running');
-      return true;
-    }
-
-    if (typeof MediaRecorder === 'undefined') {
-      console.warn('[backend-whisper] MediaRecorder unavailable in this browser');
-      return false;
-    }
-
-    try {
-      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
-
-      mediaRecorder.ondataavailable = (e) => {
-        if (!e.data || e.data.size === 0) return;
-        audioChunksRef.current.push(e.data);
-        console.log('[backend-whisper] ondataavailable', { chunkSize: e.data.size, totalChunks: audioChunksRef.current.length });
-
-        // Limit buffer to ~30 seconds (rough estimate: ~50KB per second)
-        let totalSize = audioChunksRef.current.reduce((sum, c) => sum + c.size, 0);
-        while (totalSize > 1500000 && audioChunksRef.current.length > 1) {
-          totalSize -= audioChunksRef.current[0].size;
-          audioChunksRef.current.shift();
+          // Start sending audio now that we're connected
+          startAudioCapture();
+        } else if (data.type === 'partial') {
+          handleTranscript(data.text, false);
+        } else if (data.type === 'final') {
+          handleTranscript(data.text, true);
+        } else if (data.type === 'error') {
+          console.error('[ws] Error:', data.error);
+          setTranscriptionError(data.error);
+        } else if (data.type === 'disconnected') {
+          wsConnectedRef.current = false;
         }
-      };
+      } catch (err) {
+        console.error('[ws] Parse error:', err);
+      }
+    };
 
-      mediaRecorder.onerror = (e) => {
-        console.warn('[backend-whisper] MediaRecorder error', e);
-      };
+    ws.onerror = (err) => {
+      console.error('[ws] WebSocket error:', err);
+      setTranscriptionError('Connection error');
+      setIsModelLoading(false);
+    };
 
-      // Request data every 500ms for faster backend processing
-      mediaRecorder.start(500);
-      console.log('[backend-whisper] MediaRecorder started (500ms chunks)');
-      return true;
-    } catch (recorderErr) {
-      console.warn('[backend-whisper] MediaRecorder not supported:', recorderErr);
-      return false;
-    }
-  }, []);
+    ws.onclose = () => {
+      console.log('[ws] WebSocket closed');
+      wsConnectedRef.current = false;
+      wsRef.current = null;
+      setIsModelLoading(false);
+    };
+  }, [handleTranscript]);
 
-  // Backend transcription using Speechmatics API (supports Hindi)
-  const transcribeAudioBackend = useCallback(async () => {
-    debugRef.current.transcriptionTicks += 1;
+  // Start capturing and sending audio to WebSocket
+  const startAudioCapture = useCallback(() => {
+    const stream = streamRef.current;
+    const audioContext = audioContextRef.current;
+    const ws = wsRef.current;
 
-    if (backendTranscriptionDisabledRef.current) {
-      console.log('[speechmatics] skip: backendTranscriptionDisabledRef=true');
+    if (!stream || !audioContext || !ws || ws.readyState !== WebSocket.OPEN) {
+      console.log('[audio] Cannot start capture - missing dependencies');
       return;
     }
-    if (transcriptionInFlightRef.current) {
-      console.log('[speechmatics] skip: transcription already in flight');
-      return;
-    }
-     if (pcmChunksRef.current.length === 0) {
-       console.log('[speechmatics] skip: no pcm buffered');
-       return;
-     }
 
-     transcriptionInFlightRef.current = true;
-     console.log('[speechmatics] transcriptionInFlightRef set to true, pcmChunks:', pcmChunksRef.current.length);
+    console.log('[audio] Starting audio capture for WebSocket');
 
-     // Update UI to show transcription in progress
-     setMetrics((prev) => ({
-       ...prev,
-       transcribedText: prev.transcribedText || '(transcribing...)',
-     }));
+    const source = audioContext.createMediaStreamSource(stream);
+    wsSourceRef.current = source;
 
-     try {
-       const sampleRate =
-         inputSampleRateRef.current || audioContextRef.current?.sampleRate || 48000;
+    const processor = audioContext.createScriptProcessor(4096, 1, 1);
+    wsProcessorRef.current = processor;
 
-       // Take the most recent ~5 seconds (Speechmatics batch works better with longer context)
-       const seconds = 5;
-       const targetSamples = Math.floor(sampleRate * seconds);
+    processor.onaudioprocess = (e) => {
+      if (!wsConnectedRef.current || !ws || ws.readyState !== WebSocket.OPEN) return;
 
-       let total = 0;
-       const parts: Float32Array[] = [];
-       for (let i = pcmChunksRef.current.length - 1; i >= 0 && total < targetSamples; i--) {
-         const chunk = pcmChunksRef.current[i];
-         parts.push(chunk);
-         total += chunk.length;
-       }
+      const inputData = e.inputBuffer.getChannelData(0);
+      const int16Data = downsampleBuffer(inputData, inputSampleRateRef.current);
 
-       if (total < Math.floor(sampleRate * 2)) {
-         console.log('[speechmatics] skip: not enough pcm yet', { total, sampleRate });
-         return;
-       }
+      // Send binary audio data
+      ws.send(int16Data.buffer);
+    };
 
-       parts.reverse();
-       const mono = new Float32Array(total);
-       let offset = 0;
-       for (const p of parts) {
-         mono.set(p, offset);
-         offset += p.length;
-       }
+    source.connect(processor);
+    
+    // Connect to destination (muted) to keep processor running
+    const mute = audioContext.createGain();
+    mute.gain.value = 0;
+    processor.connect(mute);
+    mute.connect(audioContext.destination);
 
-       // Keep only the last N seconds
-       const start = Math.max(0, mono.length - targetSamples);
-       const windowed = mono.slice(start);
+    console.log('[audio] Audio capture started');
+  }, [downsampleBuffer]);
 
-       const mono16k = downsampleTo16k(windowed, sampleRate);
-       const wavBuffer = encodeWavPcm16(mono16k, 16000);
-       const wavBlob = new Blob([wavBuffer], { type: 'audio/wav' });
-
-       console.log('[speechmatics] wav blob created', { size: wavBlob.size, seconds, sampleRate });
-
-       // Convert to base64 using FileReader with timeout
-       console.log('[speechmatics] converting to base64...');
-       const base64 = await Promise.race([
-         new Promise<string>((resolve, reject) => {
-           const reader = new FileReader();
-           reader.onloadend = () => {
-             const dataUrl = reader.result as string;
-             const base64Data = dataUrl.split(',')[1] || '';
-             resolve(base64Data);
-           };
-           reader.onerror = () => reject(new Error('FileReader error'));
-           reader.readAsDataURL(wavBlob);
-         }),
-         new Promise<never>((_, reject) =>
-           setTimeout(() => reject(new Error('base64 conversion timeout')), 5000)
-         )
-       ]);
-
-      console.log('[speechmatics] base64 ready, length:', base64.length);
-
-      console.log('[speechmatics] calling edge function...');
-      const { data, error } = await supabase.functions.invoke('speechmatics-transcribe', {
-        body: { audio: base64 }
-      });
-
-      console.log('[speechmatics] API response received', { data, error });
-
-      if (error) {
-        console.error('[speechmatics] API error:', error);
-        setTranscriptionError('Speechmatics API error');
-        return;
-      }
-
-      if (data?.error) {
-        const msg = typeof data.error === 'string' ? data.error : 'Transcription error';
-        console.error('[speechmatics] transcription error:', msg);
-        setTranscriptionError(msg);
-        return;
-      }
-
-      const rawText = data?.text?.trim() || '';
-      const transcribedText = rawText;
-
-      console.log('[speechmatics] result', { rawText, hasDevanagari: hasDevanagari(rawText) });
-
-      if (transcribedText) {
-        lastTranscribedTextRef.current = transcribedText;
-      }
-
-      if (!transcribedText) return;
-
-      let dictionScore = 0;
-      if (options.expectedLyrics) {
-        dictionScore = calculateSimilarity(transcribedText, options.expectedLyrics);
-      } else {
-        const wordCount = transcribedText.split(/\s+/).filter(Boolean).length;
-        dictionScore = Math.min(85, 40 + wordCount * 8);
-      }
-
-      lastDictionScoreRef.current = dictionScore;
-      setMetrics((prev) => ({
-        ...prev,
-        diction: dictionScore,
-        transcribedText: lastTranscribedTextRef.current,
-      }));
-    } catch (err) {
-      console.error('[speechmatics] transcribe failed:', err);
-    } finally {
-      transcriptionInFlightRef.current = false;
-    }
-  }, [options.expectedLyrics, calculateSimilarity, downsampleTo16k, encodeWavPcm16]);
-
-  // Transcribe audio using Speechmatics API (backend) - works on all devices
-  const transcribeAudio = useCallback(async () => {
-    const now = performance.now();
-    const elapsed = analysisStartedAtRef.current ? now - analysisStartedAtRef.current : 0;
-
-    console.log('[transcribeAudio] called', {
-      elapsed: Math.round(elapsed),
-    });
-
-    return transcribeAudioBackend();
-  }, [transcribeAudioBackend]);
-
+  // Detect pitch from frequency data
   const detectPitch = useCallback((frequencyData: Uint8Array, sampleRate: number): number => {
     let maxIndex = 0;
     let maxValue = 0;
@@ -424,15 +238,10 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     }
     
     if (maxValue < 100) return 0;
-    
-    const frequency = (maxIndex * sampleRate) / (frequencyData.length * 2);
-    return frequency;
+    return (maxIndex * sampleRate) / (frequencyData.length * 2);
   }, []);
 
-  // Intermediate diction score based on voice activity (used between transcription updates)
-  const intermediateDictionRef = useRef<number>(0);
-  const lastVoiceActivityRef = useRef<number>(0);
-
+  // Calculate vocal metrics
   const calculateMetrics = useCallback((
     currentPitch: number,
     currentVolume: number,
@@ -449,18 +258,13 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     }
     
     if (isVoiceDetected) {
-      // Track voice activity for intermediate diction scoring
       lastVoiceActivityRef.current = now;
-      
-      // Gradually increase intermediate diction while singing (before transcription confirms)
       if (intermediateDictionRef.current < lastDictionScoreRef.current) {
         intermediateDictionRef.current = lastDictionScoreRef.current;
       } else if (intermediateDictionRef.current < 70) {
-        // Slowly ramp up diction estimate while voice is detected
         intermediateDictionRef.current = Math.min(70, intermediateDictionRef.current + 0.5);
       }
     } else {
-      // If no voice for 500ms, decay intermediate diction toward last confirmed score
       if (now - lastVoiceActivityRef.current > 500) {
         const target = lastDictionScoreRef.current;
         if (intermediateDictionRef.current > target) {
@@ -474,6 +278,7 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       volumeHistoryRef.current.shift();
     }
 
+    // Beat detection
     if (volumeHistoryRef.current.length > 3) {
       const recent = volumeHistoryRef.current.slice(-3);
       const avg = recent.reduce((a, b) => a + b, 0) / recent.length;
@@ -486,6 +291,7 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       }
     }
 
+    // Calculate pitch accuracy
     let pitchAccuracy = 0;
     if (pitchHistoryRef.current.length > 5) {
       const recentPitches = pitchHistoryRef.current.slice(-10);
@@ -496,6 +302,7 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       pitchAccuracy = Math.max(0, 100 - (normalizedVariance * 200));
     }
 
+    // Calculate rhythm consistency
     let rhythm = 0;
     if (beatTimesRef.current.length > 3) {
       const intervals: number[] = [];
@@ -503,65 +310,41 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
         intervals.push(beatTimesRef.current[i] - beatTimesRef.current[i - 1]);
       }
       const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
-      const intervalVariance = intervals.reduce((sum, i) => sum + Math.pow(i - avgInterval, 2), 0) / intervals.length;
+      const intervalVariance = intervals.reduce((sum, int) => sum + Math.pow(int - avgInterval, 2), 0) / intervals.length;
       const intervalStdDev = Math.sqrt(intervalVariance);
-      const rhythmScore = Math.max(0, 100 - (intervalStdDev / avgInterval * 100));
-      rhythm = Math.min(100, rhythmScore * 1.2);
+      const normalizedIntervalVariance = Math.min(intervalStdDev / avgInterval, 0.5);
+      rhythm = Math.max(0, 100 - (normalizedIntervalVariance * 200));
     }
 
-    // Use the higher of intermediate or confirmed diction for smoother updates
-    const effectiveDiction = Math.max(lastDictionScoreRef.current, Math.round(intermediateDictionRef.current));
+    const displayDiction = Math.max(
+      lastDictionScoreRef.current,
+      Math.round(intermediateDictionRef.current)
+    );
 
     return {
       pitch: currentPitch,
-      pitchAccuracy: shouldUpdatePitch ? pitchAccuracy : metrics.pitchAccuracy,
-      rhythm,
-      diction: effectiveDiction,
+      pitchAccuracy: Math.round(pitchAccuracy),
+      rhythm: Math.round(rhythm),
+      diction: displayDiction,
       volume: currentVolume,
       isVoiceDetected,
       transcribedText: lastTranscribedTextRef.current,
     };
-  }, [metrics.pitchAccuracy]);
+  }, []);
 
+  // Start vocal analysis
   const startAnalysis = useCallback(async () => {
     try {
-      setError(null);
-
-      // Reset last transcription so old (possibly English) text doesn't linger in UI
+      console.log('[analysis] Starting...');
+      
+      // Reset state
       lastTranscribedTextRef.current = '';
       lastDictionScoreRef.current = 0;
+      intermediateDictionRef.current = 0;
       setMetrics((prev) => ({ ...prev, diction: 0, transcribedText: '' }));
-
-      setIsTranscriptionDisabled(false);
       setTranscriptionError(null);
-      backendTranscriptionDisabledRef.current = false;
-      localTranscriptionDisabledRef.current = false;
 
-      analysisStartedAtRef.current = performance.now();
-      lastModelLoadAttemptAtRef.current = 0;
-      backendFallbackRef.current = false;
-
-      isMobileRef.current = isMobileDevice();
-      const isMobile = isMobileRef.current;
-      console.log('[analysis] starting', { isMobile });
-
-      // DESKTOP ONLY: Load Whisper model in BACKGROUND
-      // On mobile, we skip model loading entirely to prevent memory crashes
-      if (!isMobile) {
-        console.log('[whisper] loadModel(): starting in background (non-blocking)');
-        loadModel().then((modelLoaded) => {
-          console.log('[whisper] loadModel(): done', { modelLoaded, checkReady: checkModelReady() });
-          if (!modelLoaded) {
-            console.warn('[whisper] Model failed to load - transcription/diction scoring disabled');
-          }
-        }).catch((err) => {
-          console.error('[whisper] Model load error:', err);
-        });
-      } else {
-        console.log('[analysis] mobile device detected - using backend transcription');
-      }
-      
-      console.log('[mic] requesting getUserMedia...');
+      // Request microphone
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
@@ -570,18 +353,16 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
         },
       });
 
-      console.log('[mic] getUserMedia ok', {
-        tracks: stream.getAudioTracks().length,
-      });
-
       streamRef.current = stream;
       setHasPermission(true);
 
+      // Create audio context
       const audioContext = new AudioContext();
       audioContextRef.current = audioContext;
       inputSampleRateRef.current = audioContext.sampleRate;
       console.log('[audio] AudioContext created', { sampleRate: audioContext.sampleRate });
 
+      // Set up analyser for pitch/volume
       const analyser = audioContext.createAnalyser();
       analyser.fftSize = 2048;
       analyser.smoothingTimeConstant = 0.8;
@@ -590,56 +371,10 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       const source = audioContext.createMediaStreamSource(stream);
       source.connect(analyser);
 
-      // Capture raw PCM for transcription.
-      // This avoids relying on MediaRecorder/webm (not supported by Speechmatics batch)
-      // and avoids webm->wav decode failures on some browsers.
-      const processor = audioContext.createScriptProcessor(4096, 1, 1);
-      processorRef.current = processor;
+      // Connect WebSocket for transcription
+      connectWebSocket();
 
-      processor.onaudioprocess = (e) => {
-        debugRef.current.audioProcessCalls += 1;
-
-        const input = e.inputBuffer.getChannelData(0);
-        pcmChunksRef.current.push(new Float32Array(input));
-
-        // Throttled logging (every ~3s)
-        const now = performance.now();
-        if (now - debugRef.current.lastAudioProcessLogAt > 3000) {
-          debugRef.current.lastAudioProcessLogAt = now;
-          const totalSamples = pcmChunksRef.current.reduce((sum, c) => sum + c.length, 0);
-          console.log('[audio] onaudioprocess', {
-            calls: debugRef.current.audioProcessCalls,
-            chunkSamples: input.length,
-            bufferedChunks: pcmChunksRef.current.length,
-            bufferedSamples: totalSamples,
-            sampleRate: inputSampleRateRef.current || audioContext.sampleRate,
-          });
-        }
-
-        // Bound memory: keep up to ~30 seconds
-        const maxSamples = (inputSampleRateRef.current || audioContext.sampleRate) * 30;
-        let total = pcmChunksRef.current.reduce((sum, c) => sum + c.length, 0);
-        while (total > maxSamples && pcmChunksRef.current.length > 1) {
-          total -= pcmChunksRef.current[0].length;
-          pcmChunksRef.current.shift();
-        }
-      };
-
-      source.connect(processor);
-      const mute = audioContext.createGain();
-      mute.gain.value = 0;
-      processor.connect(mute);
-      mute.connect(audioContext.destination);
-
-      // Transcribe every ~500ms for faster diction updates (self-scheduling to avoid overlap)
-      console.log('[whisper] scheduling transcription loop (~500ms)');
-      const loop = async () => {
-        console.log('[whisper] interval tick');
-        await transcribeAudio();
-        transcriptionIntervalRef.current = window.setTimeout(loop, 500);
-      };
-      transcriptionIntervalRef.current = window.setTimeout(loop, 0);
-
+      // Start analysis loop
       const frequencyData = new Uint8Array(analyser.frequencyBinCount);
       const timeData = new Uint8Array(analyser.frequencyBinCount);
 
@@ -655,7 +390,6 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
           sum += value * value;
         }
         const volume = Math.sqrt(sum / timeData.length);
-
         const pitch = detectPitch(frequencyData, audioContext.sampleRate);
         const newMetrics = calculateMetrics(pitch, volume, performance.now());
         
@@ -672,41 +406,36 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       setError('Microphone access denied');
       setHasPermission(false);
     }
-  }, [detectPitch, calculateMetrics, options, transcribeAudio, isModelReady, loadModel]);
+  }, [detectPitch, calculateMetrics, options, connectWebSocket]);
 
+  // Stop analysis
   const stopAnalysis = useCallback(() => {
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
       animationFrameRef.current = null;
     }
-    
-    if (transcriptionIntervalRef.current) {
-      window.clearTimeout(transcriptionIntervalRef.current);
-      transcriptionIntervalRef.current = null;
+
+    // Stop WebSocket audio capture
+    if (wsProcessorRef.current) {
+      wsProcessorRef.current.disconnect();
+      wsProcessorRef.current = null;
+    }
+    if (wsSourceRef.current) {
+      wsSourceRef.current.disconnect();
+      wsSourceRef.current = null;
     }
 
-    // Stop MediaRecorder for mobile
-    if (mediaRecorderRef.current) {
+    // Close WebSocket
+    if (wsRef.current) {
       try {
-        if (mediaRecorderRef.current.state !== 'inactive') {
-          mediaRecorderRef.current.stop();
-        }
+        wsRef.current.send(JSON.stringify({ type: 'stop' }));
       } catch {
-        // ignore
+        // Ignore
       }
-      mediaRecorderRef.current = null;
+      wsRef.current.close();
+      wsRef.current = null;
     }
-    audioChunksRef.current = [];
-
-    if (processorRef.current) {
-      try {
-        processorRef.current.disconnect();
-      } catch {
-        // ignore
-      }
-      processorRef.current.onaudioprocess = null as any;
-      processorRef.current = null;
-    }
+    wsConnectedRef.current = false;
 
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
@@ -719,7 +448,6 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     }
 
     analyserRef.current = null;
-    pcmChunksRef.current = [];
     setIsActive(false);
     
     pitchHistoryRef.current = [];
@@ -727,13 +455,14 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     beatTimesRef.current = [];
   }, []);
 
+  // Reset scores
   const resetScores = useCallback(() => {
     pitchHistoryRef.current = [];
     volumeHistoryRef.current = [];
     beatTimesRef.current = [];
-    pcmChunksRef.current = [];
     lastDictionScoreRef.current = 0;
     lastTranscribedTextRef.current = '';
+    intermediateDictionRef.current = 0;
     setMetrics({
       pitch: 0,
       pitchAccuracy: 0,
@@ -745,59 +474,26 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     });
   }, []);
 
-  // Retry transcription - resets disabled state and restarts loop
+  // Retry transcription
   const retryTranscription = useCallback(async () => {
-    backendTranscriptionDisabledRef.current = false;
-    localTranscriptionDisabledRef.current = false;
     setIsTranscriptionDisabled(false);
     setTranscriptionError(null);
-
-    // Clear any existing timer
-    if (transcriptionIntervalRef.current) {
-      window.clearTimeout(transcriptionIntervalRef.current);
-      transcriptionIntervalRef.current = null;
-    }
-
-    // Reset last text so we don't keep stale/incorrect output
     lastTranscribedTextRef.current = '';
     setMetrics((prev) => ({ ...prev, transcribedText: '' }));
 
-    // Reset timers/fallback state
-    analysisStartedAtRef.current = performance.now();
-    lastModelLoadAttemptAtRef.current = 0;
-
-    if (isMobileRef.current) {
-      backendFallbackRef.current = true;
-      ensureBackendRecorder();
-    } else {
-      backendFallbackRef.current = false;
-      // If we previously fell back, stop any running recorder so desktop local Whisper can take over.
-      if (mediaRecorderRef.current) {
-        try {
-          if (mediaRecorderRef.current.state !== 'inactive') mediaRecorderRef.current.stop();
-        } catch {
-          // ignore
-        }
-        mediaRecorderRef.current = null;
-      }
-      audioChunksRef.current = [];
+    // Reconnect WebSocket
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
     }
+    wsConnectedRef.current = false;
 
-    // Load model if not ready (desktop only)
-    if (!isMobileRef.current && !isModelReady) {
-      await loadModel();
-    }
-
-    // Restart the same self-scheduling loop used in startAnalysis
     if (isActive) {
-      const loop = async () => {
-        await transcribeAudio();
-        transcriptionIntervalRef.current = window.setTimeout(loop, 500);
-      };
-      transcriptionIntervalRef.current = window.setTimeout(loop, 0);
+      connectWebSocket();
     }
-  }, [isActive, transcribeAudio, isModelReady, loadModel, ensureBackendRecorder]);
+  }, [isActive, connectWebSocket]);
 
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
       stopAnalysis();
@@ -812,8 +508,8 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     isTranscriptionDisabled,
     transcriptionError,
     isModelLoading,
-    loadProgress,
-    isModelReady,
+    loadProgress: 100, // No local model to load
+    isModelReady: true, // Always ready (using WebSocket)
     startAnalysis,
     stopAnalysis,
     resetScores,
