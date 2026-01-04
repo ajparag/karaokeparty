@@ -201,10 +201,12 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     }
 
     transcriptionInFlightRef.current = true;
+    console.log('[backend-whisper] transcriptionInFlightRef set to true');
 
     try {
       // Combine audio chunks into a single blob
       const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm;codecs=opus' });
+      const chunkCount = audioChunksRef.current.length;
       audioChunksRef.current = []; // Clear for next batch
 
       // Need at least ~1 second of audio (rough estimate based on blob size)
@@ -213,15 +215,28 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
         return;
       }
 
-      console.log('[backend-whisper] sending to backend', { size: audioBlob.size });
+      console.log('[backend-whisper] preparing to send', { size: audioBlob.size, chunks: chunkCount });
 
-      // Convert to base64
-      const arrayBuffer = await audioBlob.arrayBuffer();
-      const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+      // Convert to base64 using FileReader (handles large arrays safely)
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const dataUrl = reader.result as string;
+          // Remove the "data:audio/webm;codecs=opus;base64," prefix
+          const base64Data = dataUrl.split(',')[1] || '';
+          resolve(base64Data);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(audioBlob);
+      });
+
+      console.log('[backend-whisper] base64 ready, length:', base64.length);
 
       const { data, error } = await supabase.functions.invoke('transcribe-audio', {
         body: { audio: base64 }
       });
+
+      console.log('[backend-whisper] API response received', { data, error });
 
       if (error) {
         console.error('[backend-whisper] API error:', error);
