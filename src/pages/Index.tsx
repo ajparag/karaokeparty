@@ -63,6 +63,12 @@ const Index = () => {
   const [trendingSongs, setTrendingSongs] = useState<string[]>([]);
   const [isLoadingTrending, setIsLoadingTrending] = useState(true);
 
+  // Clear any cached data on homepage load
+  useEffect(() => {
+    sessionStorage.removeItem('selectedTrack');
+    sessionStorage.removeItem('prefetchedLyrics');
+  }, []);
+
   // Fetch trending Hindi songs on mount with randomized queries
   useEffect(() => {
     const trendingQueries = [
