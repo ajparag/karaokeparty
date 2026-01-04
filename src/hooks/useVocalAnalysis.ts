@@ -445,11 +445,11 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
 
       console.log('[whisper] calling model...');
       
-      // Add timeout to prevent hanging - whisper-base should complete in <15s
+      // Add timeout to prevent hanging - whisper-small needs up to 30s
       const transcribeWithTimeout = Promise.race([
         transcribe(audio16k),
         new Promise<null>((_, reject) => 
-          setTimeout(() => reject(new Error('Whisper inference timeout (15s)')), 15000)
+          setTimeout(() => reject(new Error('Whisper inference timeout (30s)')), 30000)
         )
       ]);
       
