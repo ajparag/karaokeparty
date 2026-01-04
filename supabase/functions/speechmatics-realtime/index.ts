@@ -13,7 +13,7 @@ async function generateSpeechmaticsJWT(apiKey: string): Promise<string> {
       'Authorization': `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ ttl: 60 }), // 60 seconds TTL
+    body: JSON.stringify({ ttl: 3600 }), // 1 hour TTL
   });
 
   if (!response.ok) {
