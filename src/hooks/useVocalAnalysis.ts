@@ -284,6 +284,14 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       whisperLoading,
     });
 
+    // FORCE BACKEND for testing - skip local Whisper entirely
+    // TODO: Remove this after debugging
+    if (true) {
+      console.log('[transcribeAudio] FORCED backend path for testing');
+      ensureBackendRecorder();
+      return transcribeAudioBackend();
+    }
+
     // On mobile (and when local model isn't available), use backend transcription instead
     if (isMobileRef.current || backendFallbackRef.current) {
       console.log('[transcribeAudio] using backend path');
