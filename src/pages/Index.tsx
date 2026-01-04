@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -60,6 +60,45 @@ const Index = () => {
   const [fetchedLyrics, setFetchedLyrics] = useState<LyricLine[]>([]);
   const [lyricsSearchResults, setLyricsSearchResults] = useState<LyricsSearchResult[]>([]);
   const [selectedLyricsId, setSelectedLyricsId] = useState<string>("");
+  const [trendingSongs, setTrendingSongs] = useState<string[]>([]);
+  const [isLoadingTrending, setIsLoadingTrending] = useState(true);
+
+  // Fetch trending Hindi songs on mount
+  useEffect(() => {
+    const fetchTrending = async () => {
+      try {
+        const { data, error } = await supabase.functions.invoke('search-music', {
+          body: { query: 'latest hindi songs 2024', limit: 10 }
+        });
+        
+        if (!error && data?.tracks?.length > 0) {
+          // Extract unique song titles (clean them up)
+          const titles = data.tracks
+            .slice(0, 8)
+            .map((t: Track) => t.title
+              .replace(/\(.*?\)/g, '')
+              .replace(/\[.*?\]/g, '')
+              .replace(/-.*$/, '')
+              .trim()
+            )
+            .filter((t: string, i: number, arr: string[]) => 
+              t.length > 0 && t.length < 25 && arr.indexOf(t) === i
+            )
+            .slice(0, 5);
+          
+          if (titles.length > 0) {
+            setTrendingSongs(titles);
+          }
+        }
+      } catch (error) {
+        console.error('Failed to fetch trending:', error);
+      } finally {
+        setIsLoadingTrending(false);
+      }
+    };
+    
+    fetchTrending();
+  }, []);
 
   const handleSearch = async () => {
     if (!query.trim()) return;
@@ -248,11 +287,13 @@ const Index = () => {
               </Button>
             </div>
             
-            {/* Popular searches */}
+            {/* Trending searches */}
             <div className="mt-4">
-              <p className="text-sm text-muted-foreground mb-2">Popular:</p>
+              <p className="text-sm text-muted-foreground mb-2">
+                {isLoadingTrending ? 'Loading trending...' : 'Trending:'}
+              </p>
               <div className="flex flex-wrap justify-center gap-2">
-                {['Tum Hi Ho', 'Kal Ho Naa Ho', 'Chaiyya Chaiyya', 'Kesariya', 'Mere Sapno Ki Rani'].map((term) => (
+                {(trendingSongs.length > 0 ? trendingSongs : ['Tum Hi Ho', 'Kesariya', 'Kal Ho Naa Ho', 'Chaiyya Chaiyya', 'Mere Sapno Ki Rani']).map((term) => (
                   <Button
                     key={term}
                     variant="outline"
