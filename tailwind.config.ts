@@ -64,7 +64,6 @@ export default {
           progress: "hsl(var(--bar-progress))",
           perfect: "hsl(var(--bar-perfect))",
           performance: "hsl(var(--bar-performance))",
-          diction: "hsl(var(--bar-diction))",
         },
       },
       borderRadius: {

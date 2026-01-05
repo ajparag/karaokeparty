@@ -865,7 +865,6 @@ const Sing = () => {
               onRetry={retryTranscription}
               hint="Word match %"
               weight="30%"
-              barBgColor="bg-bar-diction/30"
             />
             <ScoreItem 
               label="Rhythm" 
@@ -931,12 +930,11 @@ interface ScoreItemProps {
   onRetry?: () => void;
   hint?: string;
   weight?: string;
-  barBgColor?: string;
 }
 
-const ScoreItem = ({ label, value, color, isActive, disabled, onRetry, hint, weight, barBgColor = "bg-muted" }: ScoreItemProps) => (
+const ScoreItem = ({ label, value, color, isActive, disabled, onRetry, hint, weight }: ScoreItemProps) => (
   <div className="text-center relative group">
-    <div className={`h-2 ${barBgColor} rounded-full overflow-hidden mb-2`}>
+    <div className="h-2 bg-muted rounded-full overflow-hidden mb-2">
       <div 
         className={`h-full transition-all duration-200 ${disabled ? 'bg-muted-foreground/30' : color}`} 
         style={{ width: `${value}%` }} 
