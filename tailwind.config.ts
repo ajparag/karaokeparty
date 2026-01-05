@@ -58,6 +58,7 @@ export default {
           good: "hsl(var(--score-good))",
           ok: "hsl(var(--score-ok))",
           miss: "hsl(var(--score-miss))",
+          diction: "hsl(var(--score-diction))",
         },
         bar: {
           background: "hsl(var(--bar-background))",
