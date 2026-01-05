@@ -426,7 +426,10 @@ const Index = () => {
       
       {/* Lyrics Search Dialog */}
       <Dialog open={lyricsDialogOpen} onOpenChange={setLyricsDialogOpen}>
-        <DialogContent className="sm:max-w-lg bg-card max-h-[80vh] overflow-hidden flex flex-col">
+        <DialogContent 
+          className="sm:max-w-lg bg-card max-h-[80vh] overflow-hidden flex flex-col"
+          onOpenAutoFocus={(e) => e.preventDefault()}
+        >
           <DialogHeader>
             <DialogTitle>Setup Lyrics</DialogTitle>
             <DialogDescription>
@@ -460,6 +463,7 @@ const Index = () => {
                 value={lyricsSearchTitle}
                 onChange={(e) => setLyricsSearchTitle(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleLyricsSearch()}
+                autoFocus={false}
               />
             </div>
             <div className="space-y-2">
