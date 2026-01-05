@@ -371,20 +371,34 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       setMetrics((prev) => ({ ...prev, diction: 0, transcribedText: '' }));
       setTranscriptionError(null);
 
-      // Request microphone
+      // Set audio session to playback mode BEFORE requesting microphone
+      // This prevents Android from switching to "communication" mode which routes volume to call
+      if ('audioSession' in navigator && (navigator as any).audioSession) {
+        try {
+          (navigator as any).audioSession.type = 'playback';
+          console.log('[audio] Set audio session type to playback');
+        } catch (e) {
+          console.log('[audio] Could not set audio session type:', e);
+        }
+      }
+
+      // Request microphone with voice processing disabled to avoid triggering communication mode
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
+          // Disable voice processing modes that might trigger call audio routing
+          // @ts-ignore - experimental property
+          voiceIsolation: false,
         },
       });
 
       streamRef.current = stream;
       setHasPermission(true);
 
-      // Create audio context
-      const audioContext = new AudioContext();
+      // Create audio context with playback latency hint to favor media mode
+      const audioContext = new AudioContext({ latencyHint: 'playback' });
       audioContextRef.current = audioContext;
       inputSampleRateRef.current = audioContext.sampleRate;
       console.log('[audio] AudioContext created', { sampleRate: audioContext.sampleRate, state: audioContext.state });
