@@ -137,6 +137,17 @@ const Sing = () => {
     const audio = new Audio();
     audioRef.current = audio;
 
+    // Set audio session type to 'playback' for proper volume button behavior on mobile
+    // This ensures volume buttons control media volume, not call volume
+    if ('audioSession' in navigator && (navigator as any).audioSession) {
+      try {
+        (navigator as any).audioSession.type = 'playback';
+        console.log('[audio] Set audio session type to playback');
+      } catch (e) {
+        console.log('[audio] Could not set audio session type:', e);
+      }
+    }
+
     const stopTimeSync = () => {
       if (timeSyncRafRef.current != null) {
         cancelAnimationFrame(timeSyncRafRef.current);
