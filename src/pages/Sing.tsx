@@ -936,7 +936,7 @@ const ScoreItem = ({ label, value, color, isActive, disabled, onRetry, hint, wei
   <div className="text-center relative group">
     <div className="h-2 bg-muted rounded-full overflow-hidden mb-2">
       <div 
-        className={`h-full transition-all duration-200 ${disabled ? 'bg-muted-foreground/30' : color}`} 
+        className={`h-full transition-all duration-200 ${disabled ? 'bg-amber-500/50' : color}`} 
         style={{ width: `${value}%` }} 
       />
     </div>
