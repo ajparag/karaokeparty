@@ -126,62 +126,6 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     }));
   }, [options.expectedLyrics, calculateSimilarity]);
 
-  // Connect to Speechmatics real-time WebSocket
-  const connectWebSocket = useCallback(() => {
-    if (wsRef.current) return;
-
-    console.log('[ws] Connecting to Speechmatics real-time...');
-    setIsModelLoading(true);
-
-    const wsUrl = `wss://wnfgqlywaecvbptjvktt.functions.supabase.co/speechmatics-realtime`;
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      console.log('[ws] WebSocket opened, waiting for recognition...');
-    };
-
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        
-        if (data.type === 'connected') {
-          console.log('[ws] Recognition started!');
-          wsConnectedRef.current = true;
-          setIsModelLoading(false);
-          setTranscriptionError(null);
-
-          // Start sending audio now that we're connected
-          startAudioCapture();
-        } else if (data.type === 'partial') {
-          handleTranscript(data.text, false);
-        } else if (data.type === 'final') {
-          handleTranscript(data.text, true);
-        } else if (data.type === 'error') {
-          console.error('[ws] Error:', data.error);
-          setTranscriptionError(data.error);
-        } else if (data.type === 'disconnected') {
-          wsConnectedRef.current = false;
-        }
-      } catch (err) {
-        console.error('[ws] Parse error:', err);
-      }
-    };
-
-    ws.onerror = (err) => {
-      console.error('[ws] WebSocket error:', err);
-      setTranscriptionError('Connection error');
-      setIsModelLoading(false);
-    };
-
-    ws.onclose = () => {
-      console.log('[ws] WebSocket closed');
-      wsConnectedRef.current = false;
-      wsRef.current = null;
-      setIsModelLoading(false);
-    };
-  }, [handleTranscript]);
-
   // Start capturing and sending audio to WebSocket
   const startAudioCapture = useCallback(() => {
     const stream = streamRef.current;
@@ -221,6 +165,89 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
 
     console.log('[audio] Audio capture started');
   }, [downsampleBuffer]);
+
+  // Connect to Speechmatics real-time WebSocket
+  const connectWebSocket = useCallback(() => {
+    if (wsRef.current) return;
+
+    console.log('[ws] Connecting to Speechmatics real-time...');
+    setIsModelLoading(true);
+
+    const wsUrl = `wss://wnfgqlywaecvbptjvktt.functions.supabase.co/speechmatics-realtime`;
+    
+    // Set a connection timeout (10 seconds)
+    const connectionTimeout = setTimeout(() => {
+      if (wsRef.current && !wsConnectedRef.current) {
+        console.error('[ws] Connection timeout');
+        setTranscriptionError('Connection timeout - tap Retry');
+        setIsModelLoading(false);
+        setIsTranscriptionDisabled(true);
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+    }, 10000);
+
+    try {
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        console.log('[ws] WebSocket opened, waiting for recognition...');
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          
+          if (data.type === 'connected') {
+            console.log('[ws] Recognition started!');
+            clearTimeout(connectionTimeout);
+            wsConnectedRef.current = true;
+            setIsModelLoading(false);
+            setTranscriptionError(null);
+            setIsTranscriptionDisabled(false);
+
+            // Start sending audio now that we're connected
+            startAudioCapture();
+          } else if (data.type === 'partial') {
+            handleTranscript(data.text, false);
+          } else if (data.type === 'final') {
+            handleTranscript(data.text, true);
+          } else if (data.type === 'error') {
+            console.error('[ws] Error:', data.error);
+            setTranscriptionError(data.error);
+            setIsTranscriptionDisabled(true);
+          } else if (data.type === 'disconnected') {
+            wsConnectedRef.current = false;
+          }
+        } catch (err) {
+          console.error('[ws] Parse error:', err);
+        }
+      };
+
+      ws.onerror = (err) => {
+        console.error('[ws] WebSocket error:', err);
+        clearTimeout(connectionTimeout);
+        setTranscriptionError('Connection failed - tap Retry');
+        setIsModelLoading(false);
+        setIsTranscriptionDisabled(true);
+      };
+
+      ws.onclose = () => {
+        console.log('[ws] WebSocket closed');
+        clearTimeout(connectionTimeout);
+        wsConnectedRef.current = false;
+        wsRef.current = null;
+        setIsModelLoading(false);
+      };
+    } catch (err) {
+      console.error('[ws] Failed to create WebSocket:', err);
+      clearTimeout(connectionTimeout);
+      setTranscriptionError('Failed to connect - tap Retry');
+      setIsModelLoading(false);
+      setIsTranscriptionDisabled(true);
+    }
+  }, [handleTranscript, startAudioCapture]);
 
   // Detect pitch from frequency data
   const detectPitch = useCallback((frequencyData: Uint8Array, sampleRate: number): number => {
@@ -360,7 +387,14 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       const audioContext = new AudioContext();
       audioContextRef.current = audioContext;
       inputSampleRateRef.current = audioContext.sampleRate;
-      console.log('[audio] AudioContext created', { sampleRate: audioContext.sampleRate });
+      console.log('[audio] AudioContext created', { sampleRate: audioContext.sampleRate, state: audioContext.state });
+
+      // Resume AudioContext if suspended (required on mobile browsers)
+      if (audioContext.state === 'suspended') {
+        console.log('[audio] AudioContext suspended, resuming...');
+        await audioContext.resume();
+        console.log('[audio] AudioContext resumed:', audioContext.state);
+      }
 
       // Set up analyser for pitch/volume
       const analyser = audioContext.createAnalyser();
