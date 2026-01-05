@@ -859,7 +859,7 @@ const Sing = () => {
             <ScoreItem 
               label={isModelLoading ? `Diction (${loadProgress}%)` : "Diction"} 
               value={metrics.diction} 
-              color="bg-score-diction"
+              color={getScoreColor(metrics.diction)}
               isActive={metrics.isVoiceDetected}
               disabled={isTranscriptionDisabled || isModelLoading}
               onRetry={retryTranscription}
