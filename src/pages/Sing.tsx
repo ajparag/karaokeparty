@@ -12,13 +12,14 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { ArrowLeft, Play, Pause, Mic, MicOff, RotateCcw, Save, Volume2, VolumeX, Edit2, Search, RefreshCw, Music, Check } from "lucide-react";
+import { ArrowLeft, Play, Pause, Mic, MicOff, RotateCcw, Save, Volume2, VolumeX, Edit2, Search, RefreshCw, Music, Check, Music2 } from "lucide-react";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useVocalAnalysis } from "@/hooks/useVocalAnalysis";
 import { useAuth } from "@/hooks/useAuth";
 import { Slider } from "@/components/ui/slider";
+import { useVocalSuppression } from "@/hooks/useVocalSuppression";
 
 interface Track {
   id: string;
@@ -97,6 +98,17 @@ const Sing = () => {
     retryTranscription,
   } = useVocalAnalysis();
 
+  // Vocal suppression for karaoke mode
+  const {
+    setupVocalSuppression,
+    toggleSuppression,
+    resumeContext: resumeVocalContext,
+    cleanup: cleanupVocalSuppression,
+    isEnabled: isVocalSuppressionEnabled,
+    strength: vocalSuppressionStrength,
+    updateStrength: setVocalSuppressionStrength,
+  } = useVocalSuppression();
+
   // Load track and pre-fetched lyrics from session storage
   useEffect(() => {
     const stored = sessionStorage.getItem('selectedTrack');
@@ -174,6 +186,9 @@ const Sing = () => {
       setDuration(audio.duration);
       setIsPlayerReady(true);
       setIsLoadingAudio(false);
+      
+      // Setup vocal suppression on the audio element
+      setupVocalSuppression(audio);
     };
 
     const onTimeUpdate = () => {
@@ -232,8 +247,9 @@ const Sing = () => {
       audio.src = '';
       audioRef.current = null;
       stopAnalysis();
+      cleanupVocalSuppression();
     };
-  }, [track?.audioUrl, toast, stopAnalysis]);
+  }, [track?.audioUrl, toast, stopAnalysis, setupVocalSuppression, cleanupVocalSuppression]);
 
   // Update volume/mute when changed
   useEffect(() => {
@@ -391,6 +407,8 @@ const Sing = () => {
     // CRITICAL: Start audio playback FIRST in the user gesture for mobile compatibility
     // Mobile browsers require play() to be called directly in the user interaction handler
     try {
+      // Resume vocal suppression audio context if suspended (mobile)
+      await resumeVocalContext();
       await audio.play();
     } catch (error) {
       console.error("Audio play() failed:", error);
@@ -416,7 +434,7 @@ const Sing = () => {
         console.warn("Microphone permission denied/unavailable:", err);
       });
     }
-  }, [isPlaying, isPlayerReady, isMicActive, startAnalysis, toast]);
+  }, [isPlaying, isPlayerReady, isMicActive, startAnalysis, toast, resumeVocalContext]);
 
   const toggleMic = useCallback(async () => {
     if (isMicActive) {
@@ -636,6 +654,34 @@ const Sing = () => {
           </DialogContent>
         </Dialog>
         
+        {/* Vocal Suppression Toggle */}
+        <Button 
+          variant={isVocalSuppressionEnabled ? "default" : "outline"} 
+          size="sm"
+          onClick={toggleSuppression}
+          className={`shrink-0 gap-1.5 ${isVocalSuppressionEnabled ? 'bg-primary/80 hover:bg-primary' : ''}`}
+          title={isVocalSuppressionEnabled ? `Vocal reduction: ${Math.round(vocalSuppressionStrength * 100)}%` : 'Enable vocal reduction'}
+        >
+          <Music2 className="w-4 h-4" />
+          <span className="hidden sm:inline">
+            {isVocalSuppressionEnabled ? 'Vocals Off' : 'Vocals On'}
+          </span>
+        </Button>
+        
+        {/* Vocal Suppression Strength Slider (only show when enabled on larger screens) */}
+        {isVocalSuppressionEnabled && (
+          <div className="hidden md:flex items-center gap-2">
+            <Slider
+              value={[vocalSuppressionStrength * 100]}
+              onValueChange={(v) => setVocalSuppressionStrength(v[0] / 100)}
+              min={50}
+              max={100}
+              step={5}
+              className="w-20"
+            />
+            <span className="text-xs text-muted-foreground w-8">{Math.round(vocalSuppressionStrength * 100)}%</span>
+          </div>
+        )}
         
         {/* Volume Control */}
         <div className="hidden sm:flex items-center gap-2">
