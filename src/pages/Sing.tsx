@@ -674,7 +674,7 @@ const Sing = () => {
             <Slider
               value={[vocalSuppressionStrength * 100]}
               onValueChange={(v) => setVocalSuppressionStrength(v[0] / 100)}
-              min={50}
+              min={20}
               max={100}
               step={5}
               className="w-20"
