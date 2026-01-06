@@ -24,11 +24,11 @@ export function useVocalSuppression() {
 
   // Default OFF to prioritize reliable playback; user can enable suppression explicitly.
   const [isEnabled, setIsEnabled] = useState(false);
-  const [strength, setStrength] = useState(0.85);
+  const [strength, setStrength] = useState(0.5); // Default 50%
 
   // Keep stable refs so our callbacks don't change identity when state changes.
   const isEnabledRef = useRef(false);
-  const strengthRef = useRef(0.85);
+  const strengthRef = useRef(0.5);
   const connectedRef = useRef(false);
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
 
