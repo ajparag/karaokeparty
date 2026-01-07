@@ -177,7 +177,8 @@ const Sing = () => {
       timeSyncRafRef.current = requestAnimationFrame(tick);
     };
 
-    // Use Saavn audio URL directly - it supports CORS for playback
+    // CORS is required for MediaElementAudioSourceNode to work with Web Audio API
+    audio.crossOrigin = "anonymous";
     audio.src = track.audioUrl;
     audio.preload = "auto";
 
@@ -188,6 +189,7 @@ const Sing = () => {
       setIsLoadingAudio(false);
       
       // Setup vocal suppression on the audio element
+      // Note: AudioContext will be created in suspended state until user interaction
       setupVocalSuppression(audio);
     };
 
