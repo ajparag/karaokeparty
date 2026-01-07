@@ -125,10 +125,12 @@ export function useVocalSuppression() {
         audioContextRef.current = audioContext;
 
         // Check if audio element has crossOrigin set (required for CORS)
-        if (!audioElement.crossOrigin) {
+        // Note: crossOrigin can be "" (empty string) which is also valid
+        if (audioElement.crossOrigin === null || audioElement.crossOrigin === undefined) {
           console.warn("[VocalSuppression] crossOrigin not set, skipping setup to preserve audio");
           return;
         }
+        console.log("[VocalSuppression] Setting up with crossOrigin:", audioElement.crossOrigin);
 
         const source = audioContext.createMediaElementSource(audioElement);
         sourceNodeRef.current = source;
