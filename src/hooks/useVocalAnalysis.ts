@@ -7,6 +7,8 @@ interface VocalMetrics {
   pitchAccuracy: number;   // 0-100 accuracy score
   rhythm: number;          // 0-100 rhythm consistency
   diction: number;         // 0-100 clarity score (based on transcription)
+  technique: number;       // 0-100 technique score (vibrato, glissando)
+  deductions: number;      // 0-100 deduction amount (off-key noise, wrong timing)
   volume: number;          // Current volume level 0-1
   isVoiceDetected: boolean;
   transcribedText?: string; // Latest transcribed text
@@ -16,6 +18,7 @@ interface UseVocalAnalysisOptions {
   onMetricsUpdate?: (metrics: VocalMetrics) => void;
   targetPitch?: number; // Optional reference pitch to match
   expectedLyrics?: string; // Current lyrics line for comparison
+  isInstrumentalSection?: boolean; // Flag to detect singing during instrumental breaks
 }
 
 export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
@@ -32,6 +35,8 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     pitchAccuracy: 0,
     rhythm: 0,
     diction: 0,
+    technique: 0,
+    deductions: 0,
     volume: 0,
     isVoiceDetected: false,
     transcribedText: '',
@@ -59,6 +64,15 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
   const lastBeatTimeRef = useRef<number>(0);
   const intermediateDictionRef = useRef<number>(0);
   const lastVoiceActivityRef = useRef<number>(0);
+
+  // Technique detection refs (vibrato, glissando)
+  const vibratoHistoryRef = useRef<number[]>([]); // Track pitch oscillations
+  const lastTechniqueScoreRef = useRef<number>(0);
+  
+  // Deduction tracking refs
+  const deductionScoreRef = useRef<number>(0);
+  const offKeyCountRef = useRef<number>(0);
+  const instrumentalVoiceCountRef = useRef<number>(0);
 
   // Calculate similarity between two strings
   const calculateSimilarity = useCallback((str1: string, str2: string): number => {
@@ -268,7 +282,7 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     return (maxIndex * sampleRate) / (frequencyData.length * 2);
   }, []);
 
-  // Calculate vocal metrics
+  // Calculate vocal metrics with technique and deductions
   const calculateMetrics = useCallback((
     currentPitch: number,
     currentVolume: number,
@@ -282,6 +296,12 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       if (pitchHistoryRef.current.length > 50) {
         pitchHistoryRef.current.shift();
       }
+      
+      // Track vibrato for technique detection
+      vibratoHistoryRef.current.push(currentPitch);
+      if (vibratoHistoryRef.current.length > 30) {
+        vibratoHistoryRef.current.shift();
+      }
     }
     
     if (isVoiceDetected) {
@@ -290,6 +310,12 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
         intermediateDictionRef.current = lastDictionScoreRef.current;
       } else if (intermediateDictionRef.current < 70) {
         intermediateDictionRef.current = Math.min(70, intermediateDictionRef.current + 0.5);
+      }
+      
+      // Deduction: Singing during instrumental sections
+      if (options.isInstrumentalSection) {
+        instrumentalVoiceCountRef.current += 1;
+        deductionScoreRef.current = Math.min(100, deductionScoreRef.current + 0.5);
       }
     } else {
       if (now - lastVoiceActivityRef.current > 500) {
@@ -327,6 +353,12 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       const stdDev = Math.sqrt(variance);
       const normalizedVariance = Math.min(stdDev / avgPitch, 0.5);
       pitchAccuracy = Math.max(0, 100 - (normalizedVariance * 200));
+      
+      // Deduction: Extreme off-key detection (>25% variance = off-key noise)
+      if (normalizedVariance > 0.25 && isVoiceDetected) {
+        offKeyCountRef.current += 1;
+        deductionScoreRef.current = Math.min(100, deductionScoreRef.current + 0.3);
+      }
     }
 
     // Calculate rhythm consistency
@@ -343,21 +375,95 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       rhythm = Math.max(0, 100 - (normalizedIntervalVariance * 200));
     }
 
+    // Calculate technique score (vibrato + glissando detection)
+    let technique = 0;
+    if (vibratoHistoryRef.current.length >= 10) {
+      const pitches = vibratoHistoryRef.current.slice(-20);
+      
+      // Vibrato detection: Look for oscillations in 5-8 Hz range
+      // With 60 FPS analysis, vibrato at 6 Hz = ~10 samples per cycle
+      let vibratoScore = 0;
+      if (pitches.length >= 10) {
+        const oscillations = [];
+        for (let i = 1; i < pitches.length; i++) {
+          oscillations.push(pitches[i] - pitches[i - 1]);
+        }
+        
+        // Count sign changes (oscillations)
+        let signChanges = 0;
+        for (let i = 1; i < oscillations.length; i++) {
+          if ((oscillations[i] > 0 && oscillations[i - 1] < 0) || 
+              (oscillations[i] < 0 && oscillations[i - 1] > 0)) {
+            signChanges++;
+          }
+        }
+        
+        // Ideal vibrato: 5-8 Hz = 10-16 sign changes per second
+        // At ~15 samples, expect 2-4 sign changes for good vibrato
+        if (signChanges >= 2 && signChanges <= 8) {
+          // Calculate amplitude of oscillation
+          const maxPitch = Math.max(...pitches);
+          const minPitch = Math.min(...pitches);
+          const avgPitch = pitches.reduce((a, b) => a + b, 0) / pitches.length;
+          const oscillationDepth = (maxPitch - minPitch) / avgPitch;
+          
+          // Good vibrato: 2-10% pitch variation
+          if (oscillationDepth >= 0.02 && oscillationDepth <= 0.15) {
+            vibratoScore = Math.min(100, 60 + oscillationDepth * 400);
+          }
+        }
+      }
+      
+      // Glissando/slide detection: Smooth pitch transitions
+      let glissandoScore = 0;
+      if (pitches.length >= 5) {
+        const smoothness = [];
+        for (let i = 2; i < pitches.length; i++) {
+          const acceleration = Math.abs((pitches[i] - pitches[i-1]) - (pitches[i-1] - pitches[i-2]));
+          smoothness.push(acceleration);
+        }
+        const avgSmoothness = smoothness.reduce((a, b) => a + b, 0) / smoothness.length;
+        const avgPitch = pitches.reduce((a, b) => a + b, 0) / pitches.length;
+        const normalizedSmoothness = avgSmoothness / avgPitch;
+        
+        // Low acceleration variance = smooth glissando
+        if (normalizedSmoothness < 0.03) {
+          glissandoScore = Math.max(0, 80 - normalizedSmoothness * 2000);
+        }
+      }
+      
+      // Combine vibrato and glissando scores
+      technique = Math.min(100, Math.max(vibratoScore, glissandoScore));
+      
+      // Apply smoothing to technique score
+      lastTechniqueScoreRef.current = lastTechniqueScoreRef.current * 0.8 + technique * 0.2;
+      technique = Math.round(lastTechniqueScoreRef.current);
+    }
+
     const displayDiction = Math.max(
       lastDictionScoreRef.current,
       Math.round(intermediateDictionRef.current)
     );
+
+    // Calculate final deduction (capped at 100, decays slowly)
+    const deductions = Math.round(Math.min(100, deductionScoreRef.current));
+    // Slowly decay deductions over time when not adding new ones
+    if (deductionScoreRef.current > 0) {
+      deductionScoreRef.current = Math.max(0, deductionScoreRef.current - 0.1);
+    }
 
     return {
       pitch: currentPitch,
       pitchAccuracy: Math.round(pitchAccuracy),
       rhythm: Math.round(rhythm),
       diction: displayDiction,
+      technique,
+      deductions,
       volume: currentVolume,
       isVoiceDetected,
       transcribedText: lastTranscribedTextRef.current,
     };
-  }, []);
+  }, [options.isInstrumentalSection]);
 
   // Start vocal analysis
   const startAnalysis = useCallback(async () => {
@@ -508,14 +614,21 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     pitchHistoryRef.current = [];
     volumeHistoryRef.current = [];
     beatTimesRef.current = [];
+    vibratoHistoryRef.current = [];
     lastDictionScoreRef.current = 0;
     lastTranscribedTextRef.current = '';
     intermediateDictionRef.current = 0;
+    lastTechniqueScoreRef.current = 0;
+    deductionScoreRef.current = 0;
+    offKeyCountRef.current = 0;
+    instrumentalVoiceCountRef.current = 0;
     setMetrics({
       pitch: 0,
       pitchAccuracy: 0,
       rhythm: 0,
       diction: 0,
+      technique: 0,
+      deductions: 0,
       volume: 0,
       isVoiceDetected: false,
       transcribedText: '',

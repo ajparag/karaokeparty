@@ -78,11 +78,11 @@ const Sing = () => {
   
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const timeSyncRafRef = useRef<number | null>(null);
-  const scoreAccumulatorRef = useRef({ pitch: 0, rhythm: 0, diction: 0, count: 0 });
+  const scoreAccumulatorRef = useRef({ pitch: 0, rhythm: 0, diction: 0, technique: 0, deductions: 0, count: 0 });
   const lastScoreSampleAtRef = useRef(0);
 
-  // Weights (must sum to 1.0): Pitch 50%, Diction 30%, Rhythm 20%
-  const SCORE_WEIGHTS = useRef({ pitch: 0.5, diction: 0.3, rhythm: 0.2 }).current;
+  // New scoring weights from karaoke formula: Pitch 30%, Diction 30%, Technique 20%, Rhythm 20%
+  const SCORE_WEIGHTS = useRef({ pitch: 0.3, diction: 0.3, technique: 0.2, rhythm: 0.2 }).current;
 
   const {
     isActive: isMicActive,
@@ -275,6 +275,8 @@ const Sing = () => {
       scoreAccumulatorRef.current.pitch += metrics.pitchAccuracy;
       scoreAccumulatorRef.current.rhythm += metrics.rhythm;
       scoreAccumulatorRef.current.diction += metrics.diction;
+      scoreAccumulatorRef.current.technique += metrics.technique;
+      scoreAccumulatorRef.current.deductions += metrics.deductions;
       scoreAccumulatorRef.current.count += 1;
     }
 
@@ -282,13 +284,21 @@ const Sing = () => {
       const avgPitch = scoreAccumulatorRef.current.pitch / scoreAccumulatorRef.current.count;
       const avgRhythm = scoreAccumulatorRef.current.rhythm / scoreAccumulatorRef.current.count;
       const avgDiction = scoreAccumulatorRef.current.diction / scoreAccumulatorRef.current.count;
+      const avgTechnique = scoreAccumulatorRef.current.technique / scoreAccumulatorRef.current.count;
+      const avgDeductions = scoreAccumulatorRef.current.deductions / scoreAccumulatorRef.current.count;
 
+      // Formula: Score = (Wp · P) + (Wr · R) + (Wt · T) + (Wd · D) - E
       const combined =
         avgPitch * SCORE_WEIGHTS.pitch +
         avgDiction * SCORE_WEIGHTS.diction +
+        avgTechnique * SCORE_WEIGHTS.technique +
         avgRhythm * SCORE_WEIGHTS.rhythm;
+      
+      // Apply deductions (E in the formula) - scale to max 20% of score
+      const deductionPenalty = (avgDeductions / 100) * 0.2 * combined;
+      const finalScore = Math.max(0, combined - deductionPenalty);
 
-      setTotalScore(Math.round(combined * 10));
+      setTotalScore(Math.round(finalScore * 10));
     }
   }, [isPlaying, metrics, SCORE_WEIGHTS]);
 
@@ -458,7 +468,7 @@ const Sing = () => {
   const handleRestart = useCallback(() => {
     setCurrentTime(0);
     setTotalScore(0);
-    scoreAccumulatorRef.current = { pitch: 0, rhythm: 0, diction: 0, count: 0 };
+    scoreAccumulatorRef.current = { pitch: 0, rhythm: 0, diction: 0, technique: 0, deductions: 0, count: 0 };
     lastScoreSampleAtRef.current = 0;
     resetScores();
     setShowResults(false);
@@ -709,32 +719,51 @@ const Sing = () => {
             </p>
             <p className="text-5xl font-bold text-gradient-gold mb-8">{totalScore}</p>
             
-            <div className="grid grid-cols-3 gap-4 mb-8">
-              <div className="text-center">
-                <p className="text-2xl font-semibold">
+            <div className="grid grid-cols-2 gap-3 mb-6">
+              <div className="text-center p-3 bg-muted/30 rounded-lg">
+                <p className="text-xl font-semibold">
                   {scoreAccumulatorRef.current.count > 0 
                     ? Math.round(scoreAccumulatorRef.current.pitch / scoreAccumulatorRef.current.count) 
                     : 0}%
                 </p>
-                <p className="text-sm text-muted-foreground">Pitch</p>
+                <p className="text-xs text-muted-foreground">Pitch <span className="text-primary/70">(30%)</span></p>
               </div>
-              <div className="text-center">
-                <p className="text-2xl font-semibold">
-                  {scoreAccumulatorRef.current.count > 0 
-                    ? Math.round(scoreAccumulatorRef.current.rhythm / scoreAccumulatorRef.current.count) 
-                    : 0}%
-                </p>
-                <p className="text-sm text-muted-foreground">Rhythm</p>
-              </div>
-              <div className="text-center">
-                <p className="text-2xl font-semibold">
+              <div className="text-center p-3 bg-muted/30 rounded-lg">
+                <p className="text-xl font-semibold">
                   {scoreAccumulatorRef.current.count > 0 
                     ? Math.round(scoreAccumulatorRef.current.diction / scoreAccumulatorRef.current.count) 
                     : 0}%
                 </p>
-                <p className="text-sm text-muted-foreground">Diction</p>
+                <p className="text-xs text-muted-foreground">Diction <span className="text-primary/70">(30%)</span></p>
+              </div>
+              <div className="text-center p-3 bg-muted/30 rounded-lg">
+                <p className="text-xl font-semibold">
+                  {scoreAccumulatorRef.current.count > 0 
+                    ? Math.round(scoreAccumulatorRef.current.technique / scoreAccumulatorRef.current.count) 
+                    : 0}%
+                </p>
+                <p className="text-xs text-muted-foreground">Technique <span className="text-primary/70">(20%)</span></p>
+              </div>
+              <div className="text-center p-3 bg-muted/30 rounded-lg">
+                <p className="text-xl font-semibold">
+                  {scoreAccumulatorRef.current.count > 0 
+                    ? Math.round(scoreAccumulatorRef.current.rhythm / scoreAccumulatorRef.current.count) 
+                    : 0}%
+                </p>
+                <p className="text-xs text-muted-foreground">Rhythm <span className="text-primary/70">(20%)</span></p>
               </div>
             </div>
+            
+            {/* Deductions display */}
+            {scoreAccumulatorRef.current.count > 0 && 
+             Math.round(scoreAccumulatorRef.current.deductions / scoreAccumulatorRef.current.count) > 0 && (
+              <div className="text-center mb-6 p-2 bg-destructive/10 rounded-lg border border-destructive/30">
+                <p className="text-sm text-destructive">
+                  -{Math.round(scoreAccumulatorRef.current.deductions / scoreAccumulatorRef.current.count)}% Deductions
+                </p>
+                <p className="text-xs text-muted-foreground">Off-key noise or singing during breaks</p>
+              </div>
+            )}
             
             <div className="flex gap-4 justify-center">
               <Button variant="outline" size="lg" onClick={handleRestart}>
@@ -900,42 +929,58 @@ const Sing = () => {
           {/* Scoring Weights Info */}
           <div className="mb-3 p-2 bg-muted/30 rounded-lg border border-border/30">
             <p className="text-xs text-muted-foreground text-center">
-              <span className="font-medium text-foreground">Scoring Weights:</span>{' '}
-              Pitch <span className="text-primary">50%</span> • Diction <span className="text-primary">30%</span> • Rhythm <span className="text-primary">20%</span>
+              <span className="font-medium text-foreground">Scoring:</span>{' '}
+              Pitch <span className="text-primary">30%</span> • Diction <span className="text-primary">30%</span> • Technique <span className="text-primary">20%</span> • Rhythm <span className="text-primary">20%</span> − Deductions
             </p>
           </div>
           
-          {/* Metrics */}
-          <div className="grid grid-cols-4 gap-3 md:gap-4 mb-4">
+          {/* Metrics - 6 columns: 4 metrics + deductions + score */}
+          <div className="grid grid-cols-6 gap-2 md:gap-3 mb-4">
             <ScoreItem 
               label="Pitch" 
               value={metrics.pitchAccuracy} 
               color={getScoreColor(metrics.pitchAccuracy)}
               isActive={metrics.isVoiceDetected}
-              hint="Variance < 20% = good"
-              weight="50%"
+              hint="Note accuracy"
+              weight="30%"
             />
             <ScoreItem 
-              label={isModelLoading ? `Diction (${loadProgress}%)` : "Diction"} 
+              label={isModelLoading ? `Dict (${loadProgress}%)` : "Diction"} 
               value={metrics.diction} 
               color={getScoreColor(metrics.diction)}
               isActive={metrics.isVoiceDetected}
               disabled={isTranscriptionDisabled || isModelLoading}
               onRetry={retryTranscription}
-              hint="Word match %"
+              hint="Word match"
               weight="30%"
+            />
+            <ScoreItem 
+              label="Technique" 
+              value={metrics.technique} 
+              color={getScoreColor(metrics.technique)}
+              isActive={metrics.isVoiceDetected}
+              hint="Vibrato/slides"
+              weight="20%"
             />
             <ScoreItem 
               label="Rhythm" 
               value={metrics.rhythm} 
               color={getScoreColor(metrics.rhythm)}
               isActive={metrics.isVoiceDetected}
-              hint="Beat consistency"
+              hint="Beat timing"
               weight="20%"
             />
+            <ScoreItem 
+              label="Penalty" 
+              value={metrics.deductions} 
+              color="bg-destructive/70"
+              isActive={metrics.isVoiceDetected}
+              hint="Off-key/timing"
+              isDeduction
+            />
             <div className="text-center">
-              <p className={`text-2xl md:text-3xl font-bold ${rating.color}`}>{totalScore}</p>
-              <p className="text-xs text-muted-foreground">Score</p>
+              <p className={`text-xl md:text-2xl font-bold ${rating.color}`}>{totalScore}</p>
+              <p className="text-[10px] text-muted-foreground">Score</p>
             </div>
           </div>
           
@@ -989,36 +1034,37 @@ interface ScoreItemProps {
   onRetry?: () => void;
   hint?: string;
   weight?: string;
+  isDeduction?: boolean;
 }
 
-const ScoreItem = ({ label, value, color, isActive, disabled, onRetry, hint, weight }: ScoreItemProps) => (
+const ScoreItem = ({ label, value, color, isActive, disabled, onRetry, hint, weight, isDeduction }: ScoreItemProps) => (
   <div className="text-center relative group">
-    <div className="h-2 bg-muted rounded-full overflow-hidden mb-2">
+    <div className="h-1.5 bg-muted rounded-full overflow-hidden mb-1">
       <div 
         className={`h-full transition-all duration-200 ${disabled ? 'bg-amber-500/50' : color}`} 
         style={{ width: `${value}%` }} 
       />
     </div>
-    <p className={`text-sm font-medium transition-all ${isActive ? 'scale-110' : ''}`}>
-      {Math.round(value)}%
+    <p className={`text-xs font-medium transition-all ${isActive ? 'scale-105' : ''} ${isDeduction && value > 0 ? 'text-destructive' : ''}`}>
+      {isDeduction && value > 0 ? '-' : ''}{Math.round(value)}%
     </p>
 
     {disabled && onRetry && (
       <button
         type="button"
         onClick={onRetry}
-        className="mt-1 text-xs text-amber-500 hover:text-amber-400 flex items-center justify-center gap-1 mx-auto transition-colors"
+        className="mt-0.5 text-[10px] text-amber-500 hover:text-amber-400 flex items-center justify-center gap-0.5 mx-auto transition-colors"
         title="Retry diction scoring"
       >
-        <RefreshCw className="w-3 h-3" />
+        <RefreshCw className="w-2.5 h-2.5" />
         <span>Retry</span>
       </button>
     )}
-    <p className="text-xs text-muted-foreground">
+    <p className="text-[10px] text-muted-foreground truncate">
       {label} {weight && <span className="text-primary/70">({weight})</span>}
     </p>
     {hint && (
-      <p className="text-[10px] text-muted-foreground/60 opacity-0 group-hover:opacity-100 transition-opacity">
+      <p className="text-[8px] text-muted-foreground/60 opacity-0 group-hover:opacity-100 transition-opacity truncate">
         {hint}
       </p>
     )}
