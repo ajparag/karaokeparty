@@ -25,12 +25,12 @@ export function useVocalSuppression() {
   const vocalNotch1Ref = useRef<BiquadFilterNode | null>(null);
   const vocalNotch2Ref = useRef<BiquadFilterNode | null>(null);
 
-  // Default OFF to prioritize reliable playback
-  const [isEnabled, setIsEnabled] = useState(false);
-  const [strength, setStrength] = useState(0.5); // Default 50%
+  // Default ON: karaoke mode should suppress vocals unless the user opts out
+  const [isEnabled, setIsEnabled] = useState(true);
+  const [strength, setStrength] = useState(1); // Default 100%
 
-  const isEnabledRef = useRef(false);
-  const strengthRef = useRef(0.5);
+  const isEnabledRef = useRef(true);
+  const strengthRef = useRef(1);
   const connectedRef = useRef(false);
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
 
@@ -50,12 +50,11 @@ export function useVocalSuppression() {
       const now = ctx.currentTime;
 
       if (nextEnabled) {
-        // Dry/wet crossfade: always keep some dry signal
-        // At 100% strength: 40% dry, 60% wet (never fully silent)
-        // At 20% strength: 80% dry, 20% wet
-        const wetLevel = nextStrength * 0.6;
-        const dryLevel = 1 - (nextStrength * 0.6);
-        
+        // Dry/wet crossfade:
+        // - Strength 1.0 => 10% dry / 90% wet (strong suppression, never fully silent)
+        // - Strength 0.2 => 80% dry / 20% wet
+        const dryLevel = Math.max(0.1, 1 - nextStrength);
+        const wetLevel = 1 - dryLevel;
         if (dryGainRef.current) {
           dryGainRef.current.gain.setTargetAtTime(dryLevel, now, 0.05);
         }
