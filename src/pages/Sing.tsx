@@ -711,6 +711,22 @@ const Sing = () => {
             <span className="hidden sm:inline">{separationProgress || 'Processing...'}</span>
           </div>
         )}
+        
+        {separationError && !isSeparating && (
+          <div className="flex items-center gap-2 text-sm text-destructive">
+            <span className="hidden sm:inline truncate max-w-[150px]" title={separationError}>
+              AI failed
+            </span>
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={resetSeparation}
+              className="h-6 px-2 text-xs"
+            >
+              Retry
+            </Button>
+          </div>
+        )}
 
         {separatedAudio && (
           <Button 
