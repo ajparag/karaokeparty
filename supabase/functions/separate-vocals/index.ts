@@ -13,11 +13,11 @@ serve(async (req) => {
   }
 
   try {
-    const { audioUrl } = await req.json();
+    const { audioUrl, audioBase64 } = await req.json();
 
-    if (!audioUrl) {
+    if (!audioUrl && !audioBase64) {
       return new Response(
-        JSON.stringify({ error: "audioUrl is required" }),
+        JSON.stringify({ error: "audioUrl or audioBase64 is required" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -38,16 +38,41 @@ serve(async (req) => {
       hf_token: HF_TOKEN as `hf_${string}`,
     });
 
-    console.log("[separate-vocals] Fetching audio from URL...");
-    
-    // Fetch the audio file from the URL
-    const audioResponse = await fetch(audioUrl);
-    if (!audioResponse.ok) {
-      throw new Error(`Failed to fetch audio: ${audioResponse.statusText}`);
+    let audioBlob: Blob;
+
+    // If base64 audio is provided (from client), use it directly
+    if (audioBase64) {
+      console.log("[separate-vocals] Using client-provided audio data...");
+      // Decode base64 to blob
+      const binaryString = atob(audioBase64);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      audioBlob = new Blob([bytes], { type: 'audio/mp4' });
+      console.log(`[separate-vocals] Audio blob created: ${audioBlob.size} bytes`);
+    } else {
+      console.log("[separate-vocals] Fetching audio from URL:", audioUrl);
+      
+      // Fetch the audio file from the URL with browser-like headers
+      const audioResponse = await fetch(audioUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'audio/*, */*',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Referer': 'https://www.jiosaavn.com/',
+          'Origin': 'https://www.jiosaavn.com',
+        },
+      });
+      
+      if (!audioResponse.ok) {
+        console.error(`[separate-vocals] Audio fetch failed: ${audioResponse.status} ${audioResponse.statusText}`);
+        throw new Error(`Failed to fetch audio: ${audioResponse.status} ${audioResponse.statusText}`);
+      }
+      
+      audioBlob = await audioResponse.blob();
+      console.log(`[separate-vocals] Audio fetched: ${audioBlob.size} bytes, type: ${audioBlob.type}`);
     }
-    
-    const audioBlob = await audioResponse.blob();
-    console.log(`[separate-vocals] Audio fetched: ${audioBlob.size} bytes, type: ${audioBlob.type}`);
 
     console.log("[separate-vocals] Submitting to Demucs for separation...");
     
