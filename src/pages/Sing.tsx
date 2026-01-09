@@ -12,7 +12,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { ArrowLeft, Play, Pause, Mic, MicOff, RotateCcw, Save, Volume2, VolumeX, Edit2, Search, RefreshCw, Music, Check, Music2 } from "lucide-react";
+import { ArrowLeft, Play, Pause, Mic, MicOff, RotateCcw, Save, Volume2, VolumeX, Edit2, Search, RefreshCw, Music, Check, Music2, Loader2, Sparkles } from "lucide-react";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -20,6 +20,7 @@ import { useVocalAnalysis } from "@/hooks/useVocalAnalysis";
 import { useAuth } from "@/hooks/useAuth";
 import { Slider } from "@/components/ui/slider";
 import { useVocalSuppression } from "@/hooks/useVocalSuppression";
+import { useVocalSeparation } from "@/hooks/useVocalSeparation";
 
 interface Track {
   id: string;
@@ -98,7 +99,7 @@ const Sing = () => {
     retryTranscription,
   } = useVocalAnalysis();
 
-  // Vocal suppression for karaoke mode
+  // Vocal suppression for karaoke mode (real-time filters)
   const {
     setupVocalSuppression,
     toggleSuppression,
@@ -108,6 +109,19 @@ const Sing = () => {
     strength: vocalSuppressionStrength,
     updateStrength: setVocalSuppressionStrength,
   } = useVocalSuppression();
+
+  // AI-based vocal separation (Demucs via HuggingFace)
+  const {
+    isProcessing: isSeparating,
+    progress: separationProgress,
+    error: separationError,
+    separatedAudio,
+    separateVocals,
+    reset: resetSeparation,
+  } = useVocalSeparation();
+
+  // Track whether we're using the AI-separated instrumental
+  const [useAiSeparation, setUseAiSeparation] = useState(false);
 
   // Load track and pre-fetched lyrics from session storage
   useEffect(() => {
@@ -179,7 +193,10 @@ const Sing = () => {
 
     // CORS is required for MediaElementAudioSourceNode to work with Web Audio API
     audio.crossOrigin = "anonymous";
-    audio.src = track.audioUrl;
+    // Use AI-separated instrumental if available, otherwise original track
+    audio.src = (useAiSeparation && separatedAudio?.instrumentalUrl) 
+      ? separatedAudio.instrumentalUrl 
+      : track.audioUrl;
     audio.preload = "auto";
 
     const onLoadedMetadata = () => {
@@ -251,7 +268,7 @@ const Sing = () => {
       stopAnalysis();
       cleanupVocalSuppression();
     };
-  }, [track?.audioUrl, toast, stopAnalysis, setupVocalSuppression, cleanupVocalSuppression]);
+  }, [track?.audioUrl, toast, stopAnalysis, setupVocalSuppression, cleanupVocalSuppression, useAiSeparation, separatedAudio?.instrumentalUrl]);
 
   // Update volume/mute when changed
   useEffect(() => {
@@ -666,22 +683,68 @@ const Sing = () => {
           </DialogContent>
         </Dialog>
         
-        {/* Vocal Suppression Toggle */}
-        <Button 
-          variant={isVocalSuppressionEnabled ? "default" : "outline"} 
-          size="sm"
-          onClick={toggleSuppression}
-          className={`shrink-0 gap-1.5 ${isVocalSuppressionEnabled ? 'bg-primary/80 hover:bg-primary' : ''}`}
-          title={isVocalSuppressionEnabled ? `Vocal reduction: ${Math.round(vocalSuppressionStrength * 100)}%` : 'Enable vocal reduction'}
-        >
-          <Music2 className="w-4 h-4" />
-          <span className="hidden sm:inline">
-            {isVocalSuppressionEnabled ? 'Vocals Off' : 'Vocals On'}
-          </span>
-        </Button>
+        {/* AI Vocal Separation Button */}
+        {!separatedAudio && !isSeparating && (
+          <Button 
+            variant="outline" 
+            size="sm"
+            onClick={async () => {
+              if (track?.audioUrl) {
+                const result = await separateVocals(track.audioUrl);
+                if (result) {
+                  setUseAiSeparation(true);
+                  toast({ title: "AI separation complete", description: "Now playing instrumental-only track" });
+                }
+              }
+            }}
+            className="shrink-0 gap-1.5"
+            title="Use AI to remove vocals (Demucs)"
+          >
+            <Sparkles className="w-4 h-4" />
+            <span className="hidden sm:inline">AI Remove Vocals</span>
+          </Button>
+        )}
         
-        {/* Vocal Suppression Strength Slider (only show when enabled on larger screens) */}
-        {isVocalSuppressionEnabled && (
+        {isSeparating && (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <span className="hidden sm:inline">{separationProgress || 'Processing...'}</span>
+          </div>
+        )}
+
+        {separatedAudio && (
+          <Button 
+            variant={useAiSeparation ? "default" : "outline"} 
+            size="sm"
+            onClick={() => setUseAiSeparation(!useAiSeparation)}
+            className={`shrink-0 gap-1.5 ${useAiSeparation ? 'bg-green-600 hover:bg-green-700' : ''}`}
+            title={useAiSeparation ? 'Using AI instrumental' : 'Switch to AI instrumental'}
+          >
+            <Sparkles className="w-4 h-4" />
+            <span className="hidden sm:inline">
+              {useAiSeparation ? 'AI Instrumental' : 'Use AI Track'}
+            </span>
+          </Button>
+        )}
+        
+        {/* Vocal Suppression Toggle (only show when not using AI separation) */}
+        {!useAiSeparation && (
+          <Button 
+            variant={isVocalSuppressionEnabled ? "default" : "outline"} 
+            size="sm"
+            onClick={toggleSuppression}
+            className={`shrink-0 gap-1.5 ${isVocalSuppressionEnabled ? 'bg-primary/80 hover:bg-primary' : ''}`}
+            title={isVocalSuppressionEnabled ? `Vocal reduction: ${Math.round(vocalSuppressionStrength * 100)}%` : 'Enable vocal reduction'}
+          >
+            <Music2 className="w-4 h-4" />
+            <span className="hidden sm:inline">
+              {isVocalSuppressionEnabled ? 'Vocals Off' : 'Vocals On'}
+            </span>
+          </Button>
+        )}
+        
+        {/* Vocal Suppression Strength Slider (only show when enabled and not using AI) */}
+        {isVocalSuppressionEnabled && !useAiSeparation && (
           <div className="hidden md:flex items-center gap-2">
             <Slider
               value={[vocalSuppressionStrength * 100]}

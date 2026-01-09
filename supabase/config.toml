@@ -17,3 +17,6 @@ verify_jwt = false
 
 [functions.speechmatics-realtime]
 verify_jwt = false
+
+[functions.separate-vocals]
+verify_jwt = false
