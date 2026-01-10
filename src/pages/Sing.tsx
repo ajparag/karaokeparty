@@ -144,6 +144,17 @@ const Sing = () => {
     }
   }, [trackId, navigate, toast]);
 
+  // Auto-start AI separation when track loads
+  useEffect(() => {
+    if (track?.audioUrl && !separatedAudio && !isSeparating && !separationError) {
+      separateVocals(track.audioUrl).then((result) => {
+        if (result) {
+          console.log('[ai-separation] Auto-started and completed successfully');
+        }
+      });
+    }
+  }, [track?.audioUrl, separatedAudio, isSeparating, separationError, separateVocals]);
+
   // Initialize HTML5 Audio Player - Demucs instrumental or fallback to original
   useEffect(() => {
     if (!track?.audioUrl) return;
@@ -297,18 +308,23 @@ const Sing = () => {
     }
   }, [currentTime]);
 
-  // Update volume/mute when changed
+  // Update volume/mute when changed - instrumental always plays, vocals only when enabled
   useEffect(() => {
     if (audioRef.current) {
       audioRef.current.volume = isMuted ? 0 : volume / 100;
       audioRef.current.muted = isMuted;
     }
-    if (vocalsAudioRef.current) {
-      // Vocals at 80% of the master volume
-      vocalsAudioRef.current.volume = isMuted ? 0 : (volume / 100) * 0.8;
-      vocalsAudioRef.current.muted = isMuted;
-    }
   }, [volume, isMuted]);
+
+  // Vocals volume is independent - 80% of master, and controlled by vocalsEnabled
+  useEffect(() => {
+    if (vocalsAudioRef.current) {
+      // Vocals at 80% of the master volume, but only if enabled
+      const vocalsVolume = vocalsEnabled ? (volume / 100) * 0.8 : 0;
+      vocalsAudioRef.current.volume = isMuted ? 0 : vocalsVolume;
+      vocalsAudioRef.current.muted = isMuted || !vocalsEnabled;
+    }
+  }, [volume, isMuted, vocalsEnabled]);
 
   // Accumulate score from live metrics while audio is playing.
   // NOTE: This lives outside the mic hook so it always sees the latest `isPlaying` state.
