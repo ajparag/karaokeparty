@@ -19,7 +19,6 @@ import { useToast } from "@/hooks/use-toast";
 import { useVocalAnalysis } from "@/hooks/useVocalAnalysis";
 import { useAuth } from "@/hooks/useAuth";
 import { Slider } from "@/components/ui/slider";
-import { useVocalSuppression } from "@/hooks/useVocalSuppression";
 import { useVocalSeparation } from "@/hooks/useVocalSeparation";
 
 interface Track {
@@ -77,7 +76,10 @@ const Sing = () => {
   const [lyricsSearchResults, setLyricsSearchResults] = useState<LyricsSearchResult[]>([]);
   const [selectedLyricsId, setSelectedLyricsId] = useState<string>("");
   
+  // Main instrumental audio
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  // Vocals audio (plays at 80% volume when enabled)
+  const vocalsAudioRef = useRef<HTMLAudioElement | null>(null);
   const timeSyncRafRef = useRef<number | null>(null);
   const scoreAccumulatorRef = useRef({ pitch: 0, rhythm: 0, diction: 0, technique: 0, deductions: 0, count: 0 });
   const lastScoreSampleAtRef = useRef(0);
@@ -99,17 +101,6 @@ const Sing = () => {
     retryTranscription,
   } = useVocalAnalysis();
 
-  // Vocal suppression for karaoke mode (real-time filters)
-  const {
-    setupVocalSuppression,
-    toggleSuppression,
-    resumeContext: resumeVocalContext,
-    cleanup: cleanupVocalSuppression,
-    isEnabled: isVocalSuppressionEnabled,
-    strength: vocalSuppressionStrength,
-    updateStrength: setVocalSuppressionStrength,
-  } = useVocalSuppression();
-
   // AI-based vocal separation (Demucs via HuggingFace)
   const {
     isProcessing: isSeparating,
@@ -120,8 +111,8 @@ const Sing = () => {
     reset: resetSeparation,
   } = useVocalSeparation();
 
-  // Track whether we're using the AI-separated instrumental
-  const [useAiSeparation, setUseAiSeparation] = useState(false);
+  // Vocals ON/OFF toggle (plays vocals at 80% volume when ON)
+  const [vocalsEnabled, setVocalsEnabled] = useState(false);
 
   // Load track and pre-fetched lyrics from session storage
   useEffect(() => {
@@ -153,7 +144,7 @@ const Sing = () => {
     }
   }, [trackId, navigate, toast]);
 
-  // Initialize HTML5 Audio Player - use Saavn URL directly (no proxy needed)
+  // Initialize HTML5 Audio Player - Demucs instrumental or fallback to original
   useEffect(() => {
     if (!track?.audioUrl) return;
 
@@ -164,7 +155,6 @@ const Sing = () => {
     audioRef.current = audio;
 
     // Set audio session type to 'playback' for proper volume button behavior on mobile
-    // This ensures volume buttons control media volume, not call volume
     if ('audioSession' in navigator && (navigator as any).audioSession) {
       try {
         (navigator as any).audioSession.type = 'playback';
@@ -191,12 +181,9 @@ const Sing = () => {
       timeSyncRafRef.current = requestAnimationFrame(tick);
     };
 
-    // CORS is required for MediaElementAudioSourceNode to work with Web Audio API
-    audio.crossOrigin = "anonymous";
     // Use AI-separated instrumental if available, otherwise original track
-    audio.src = (useAiSeparation && separatedAudio?.instrumentalUrl) 
-      ? separatedAudio.instrumentalUrl 
-      : track.audioUrl;
+    audio.crossOrigin = "anonymous";
+    audio.src = separatedAudio?.instrumentalUrl || track.audioUrl;
     audio.preload = "auto";
 
     const onLoadedMetadata = () => {
@@ -204,10 +191,6 @@ const Sing = () => {
       setDuration(audio.duration);
       setIsPlayerReady(true);
       setIsLoadingAudio(false);
-      
-      // Setup vocal suppression on the audio element
-      // Note: AudioContext will be created in suspended state until user interaction
-      setupVocalSuppression(audio);
     };
 
     const onTimeUpdate = () => {
@@ -266,15 +249,64 @@ const Sing = () => {
       audio.src = '';
       audioRef.current = null;
       stopAnalysis();
-      cleanupVocalSuppression();
     };
-  }, [track?.audioUrl, toast, stopAnalysis, setupVocalSuppression, cleanupVocalSuppression, useAiSeparation, separatedAudio?.instrumentalUrl]);
+  }, [track?.audioUrl, toast, stopAnalysis, separatedAudio?.instrumentalUrl]);
+
+  // Setup vocals audio when separated audio is available
+  useEffect(() => {
+    if (!separatedAudio?.vocalsUrl) {
+      vocalsAudioRef.current = null;
+      return;
+    }
+
+    const vocalsAudio = new Audio();
+    vocalsAudio.crossOrigin = "anonymous";
+    vocalsAudio.src = separatedAudio.vocalsUrl;
+    vocalsAudio.preload = "auto";
+    vocalsAudio.volume = 0.8; // 80% volume
+    vocalsAudioRef.current = vocalsAudio;
+
+    return () => {
+      vocalsAudio.pause();
+      vocalsAudio.src = '';
+      vocalsAudioRef.current = null;
+    };
+  }, [separatedAudio?.vocalsUrl]);
+
+  // Sync vocals audio with main audio
+  useEffect(() => {
+    const vocalsAudio = vocalsAudioRef.current;
+    if (!vocalsAudio || !separatedAudio?.vocalsUrl) return;
+
+    if (isPlaying && vocalsEnabled) {
+      vocalsAudio.currentTime = currentTime;
+      vocalsAudio.play().catch(console.error);
+    } else {
+      vocalsAudio.pause();
+    }
+  }, [isPlaying, vocalsEnabled, separatedAudio?.vocalsUrl]);
+
+  // Sync vocals audio time when main audio seeks
+  useEffect(() => {
+    const vocalsAudio = vocalsAudioRef.current;
+    if (!vocalsAudio) return;
+    
+    // Only sync if difference is significant (>0.5s)
+    if (Math.abs(vocalsAudio.currentTime - currentTime) > 0.5) {
+      vocalsAudio.currentTime = currentTime;
+    }
+  }, [currentTime]);
 
   // Update volume/mute when changed
   useEffect(() => {
     if (audioRef.current) {
       audioRef.current.volume = isMuted ? 0 : volume / 100;
       audioRef.current.muted = isMuted;
+    }
+    if (vocalsAudioRef.current) {
+      // Vocals at 80% of the master volume
+      vocalsAudioRef.current.volume = isMuted ? 0 : (volume / 100) * 0.8;
+      vocalsAudioRef.current.muted = isMuted;
     }
   }, [volume, isMuted]);
 
@@ -430,15 +462,18 @@ const Sing = () => {
 
     if (isPlaying) {
       audio.pause();
+      vocalsAudioRef.current?.pause();
       return;
     }
 
     // CRITICAL: Start audio playback FIRST in the user gesture for mobile compatibility
-    // Mobile browsers require play() to be called directly in the user interaction handler
     try {
-      // Resume vocal suppression audio context if suspended (mobile)
-      await resumeVocalContext();
       await audio.play();
+      // Start vocals if enabled
+      if (vocalsEnabled && vocalsAudioRef.current) {
+        vocalsAudioRef.current.currentTime = audio.currentTime;
+        vocalsAudioRef.current.play().catch(console.error);
+      }
     } catch (error) {
       console.error("Audio play() failed:", error);
       const name = (error as any)?.name;
@@ -457,13 +492,12 @@ const Sing = () => {
     }
 
     // Start mic AFTER audio playback has begun (non-blocking for the user)
-    // The Whisper model loads in background without blocking playback
     if (!isMicActive) {
       startAnalysis().catch((err) => {
         console.warn("Microphone permission denied/unavailable:", err);
       });
     }
-  }, [isPlaying, isPlayerReady, isMicActive, startAnalysis, toast, resumeVocalContext]);
+  }, [isPlaying, isPlayerReady, isMicActive, startAnalysis, toast, vocalsEnabled]);
 
   const toggleMic = useCallback(async () => {
     if (isMicActive) {
@@ -482,6 +516,10 @@ const Sing = () => {
     setIsMuted(!isMuted);
   }, [isMuted]);
 
+  const toggleVocals = useCallback(() => {
+    setVocalsEnabled(!vocalsEnabled);
+  }, [vocalsEnabled]);
+
   const handleRestart = useCallback(() => {
     setCurrentTime(0);
     setTotalScore(0);
@@ -491,6 +529,9 @@ const Sing = () => {
     setShowResults(false);
     if (audioRef.current) {
       audioRef.current.currentTime = 0;
+    }
+    if (vocalsAudioRef.current) {
+      vocalsAudioRef.current.currentTime = 0;
     }
   }, [resetScores]);
 
@@ -553,6 +594,16 @@ const Sing = () => {
   };
 
   const rating = getRating(totalScore);
+
+  // Handle starting AI separation
+  const handleStartSeparation = async () => {
+    if (track?.audioUrl) {
+      const result = await separateVocals(track.audioUrl);
+      if (result) {
+        toast({ title: "AI separation complete", description: "Now playing instrumental track with optional vocals" });
+      }
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -683,25 +734,17 @@ const Sing = () => {
           </DialogContent>
         </Dialog>
         
-        {/* AI Vocal Separation Button */}
+        {/* AI Vocal Separation Button - only show if not yet separated */}
         {!separatedAudio && !isSeparating && (
           <Button 
             variant="outline" 
             size="sm"
-            onClick={async () => {
-              if (track?.audioUrl) {
-                const result = await separateVocals(track.audioUrl);
-                if (result) {
-                  setUseAiSeparation(true);
-                  toast({ title: "AI separation complete", description: "Now playing instrumental-only track" });
-                }
-              }
-            }}
+            onClick={handleStartSeparation}
             className="shrink-0 gap-1.5"
-            title="Use AI to remove vocals (Demucs)"
+            title="Use AI to separate vocals (Demucs)"
           >
             <Sparkles className="w-4 h-4" />
-            <span className="hidden sm:inline">AI Remove Vocals</span>
+            <span className="hidden sm:inline">AI Separate</span>
           </Button>
         )}
         
@@ -728,50 +771,20 @@ const Sing = () => {
           </div>
         )}
 
+        {/* Vocals ON/OFF Toggle - only show when separation is complete */}
         {separatedAudio && (
           <Button 
-            variant={useAiSeparation ? "default" : "outline"} 
+            variant={vocalsEnabled ? "default" : "outline"} 
             size="sm"
-            onClick={() => setUseAiSeparation(!useAiSeparation)}
-            className={`shrink-0 gap-1.5 ${useAiSeparation ? 'bg-green-600 hover:bg-green-700' : ''}`}
-            title={useAiSeparation ? 'Using AI instrumental' : 'Switch to AI instrumental'}
-          >
-            <Sparkles className="w-4 h-4" />
-            <span className="hidden sm:inline">
-              {useAiSeparation ? 'AI Instrumental' : 'Use AI Track'}
-            </span>
-          </Button>
-        )}
-        
-        {/* Vocal Suppression Toggle (only show when not using AI separation) */}
-        {!useAiSeparation && (
-          <Button 
-            variant={isVocalSuppressionEnabled ? "default" : "outline"} 
-            size="sm"
-            onClick={toggleSuppression}
-            className={`shrink-0 gap-1.5 ${isVocalSuppressionEnabled ? 'bg-primary/80 hover:bg-primary' : ''}`}
-            title={isVocalSuppressionEnabled ? `Vocal reduction: ${Math.round(vocalSuppressionStrength * 100)}%` : 'Enable vocal reduction'}
+            onClick={toggleVocals}
+            className={`shrink-0 gap-1.5 ${vocalsEnabled ? 'bg-primary hover:bg-primary/90' : ''}`}
+            title={vocalsEnabled ? 'Vocals playing at 80%' : 'Enable vocals (80% volume)'}
           >
             <Music2 className="w-4 h-4" />
             <span className="hidden sm:inline">
-              {isVocalSuppressionEnabled ? 'Vocals Off' : 'Vocals On'}
+              {vocalsEnabled ? 'Vocals On' : 'Vocals Off'}
             </span>
           </Button>
-        )}
-        
-        {/* Vocal Suppression Strength Slider (only show when enabled and not using AI) */}
-        {isVocalSuppressionEnabled && !useAiSeparation && (
-          <div className="hidden md:flex items-center gap-2">
-            <Slider
-              value={[vocalSuppressionStrength * 100]}
-              onValueChange={(v) => setVocalSuppressionStrength(v[0] / 100)}
-              min={20}
-              max={100}
-              step={5}
-              className="w-20"
-            />
-            <span className="text-xs text-muted-foreground w-8">{Math.round(vocalSuppressionStrength * 100)}%</span>
-          </div>
         )}
         
         {/* Volume Control */}
@@ -898,84 +911,38 @@ const Sing = () => {
                       : Math.max(0.25, duration - line.time);
 
                 const lineProgress = isCurrent
-                  ? Math.min(100, Math.max(0, ((currentTime - line.time) / effectiveDuration) * 100))
+                  ? Math.min(1, Math.max(0, (currentTime - line.time) / effectiveDuration))
                   : isPast
-                    ? 100
+                    ? 1
                     : 0;
-                
-                // Split text into words for per-word highlighting
-                const words = (line.text || '♪ ♪ ♪').split(/\s+/);
-                const wordCount = words.length;
-                
+
                 return (
-                  <div 
-                    key={`${actualIndex}-${line.time}`} 
-                    className={`singing-bar transition-all duration-300 ${
-                      isCurrent ? 'ring-2 ring-primary scale-[1.02]' : isPast ? 'opacity-40' : 'opacity-60'
+                  <div
+                    key={actualIndex}
+                    className={`text-center transition-all duration-300 w-full ${
+                      isCurrent
+                        ? 'text-2xl md:text-4xl font-bold scale-100 opacity-100'
+                        : isPast
+                          ? 'text-lg md:text-xl opacity-40 scale-95'
+                          : 'text-lg md:text-xl opacity-60 scale-95'
                     }`}
                   >
-                    {isCurrent && isMicActive && (
-                      <div 
-                        className="singing-bar-performance"
-                        style={{ width: `${metrics.volume * 100}%` }}
-                      />
-                    )}
-                    
-                    <span 
-                      className={`relative z-10 text-lg md:text-2xl lg:text-3xl leading-tight transition-colors tracking-wide ${
-                        isCurrent ? 'font-semibold' : 'text-muted-foreground'
-                      }`}
-                      style={{ wordSpacing: '0.3em' }}
-                    >
-                      {words.map((word, wordIdx) => {
-                        // Calculate per-word progress
-                        const wordStart = (wordIdx / wordCount) * 100;
-                        const wordEnd = ((wordIdx + 1) / wordCount) * 100;
-                        const isWordComplete = lineProgress >= wordEnd;
-                        const isWordCurrent = lineProgress >= wordStart && lineProgress < wordEnd;
-                        const wordProgress = isWordCurrent 
-                          ? ((lineProgress - wordStart) / (wordEnd - wordStart)) * 100 
-                          : isWordComplete ? 100 : 0;
-                        
-                        return (
-                          <span 
-                            key={wordIdx} 
-                            className="relative inline-block"
-                            style={{ marginRight: wordIdx < words.length - 1 ? '0.3em' : 0 }}
-                          >
-                            {/* Background word */}
-                            <span className={isCurrent ? 'text-muted-foreground/50' : ''}>
-                              {word}
-                            </span>
-                            {/* Highlighted overlay */}
-                            {isCurrent && (
-                              <span 
-                                className="absolute left-0 top-0 text-primary overflow-hidden whitespace-nowrap"
-                                style={{ 
-                                  width: `${wordProgress}%`,
-                                  clipPath: `inset(0 ${100 - wordProgress}% 0 0)`,
-                                }}
-                              >
-                                {word}
-                              </span>
-                            )}
-                            {/* Underline progress indicator */}
-                            {isCurrent && (
-                              <span 
-                                className="absolute bottom-0 left-0 h-0.5 bg-primary rounded-full transition-[width] duration-50 ease-linear"
-                                style={{ width: `${wordProgress}%` }}
-                              />
-                            )}
-                          </span>
-                        );
-                      })}
-                    </span>
-                    
-                    {isCurrent && isMicActive && metrics.isVoiceDetected && (
-                      <span className="absolute right-4 text-sm font-medium text-score-perfect animate-score-pop">
-                        +{Math.round(metrics.pitchAccuracy / 10)}
-                      </span>
-                    )}
+                    <div className="relative inline-block">
+                      <span className="text-muted-foreground">{line.text}</span>
+                      {isCurrent && (
+                        <span
+                          className="absolute left-0 top-0 text-primary overflow-hidden whitespace-nowrap"
+                          style={{ width: `${lineProgress * 100}%` }}
+                        >
+                          {line.text}
+                        </span>
+                      )}
+                      {isPast && (
+                        <span className="absolute left-0 top-0 text-primary/70 overflow-hidden whitespace-nowrap w-full">
+                          {line.text}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 );
               })
@@ -984,170 +951,97 @@ const Sing = () => {
         )}
       </div>
 
-      {/* Score Panel */}
-      <div className="score-panel p-4 md:p-6 shrink-0">
-        <div className="max-w-4xl mx-auto">
-          {/* Live Transcription Display - Always visible when mic is on */}
+      {/* Score Display */}
+      <div className="glass border-t border-border p-4 shrink-0">
+        <div className="flex items-center justify-between max-w-4xl mx-auto">
+          <div className="flex items-center gap-4">
+            <div className="text-center">
+              <p className="text-3xl font-bold text-gradient-gold">{totalScore}</p>
+              <p className="text-xs text-muted-foreground">Score</p>
+            </div>
+            <div className={`text-2xl font-bold ${rating.color}`}>
+              {rating.letter}
+            </div>
+          </div>
+
+          {/* Live Metrics */}
           {isMicActive && (
-            <div className="mb-4 p-3 bg-muted/50 rounded-lg border border-border/50">
-              <p className="text-xs text-muted-foreground mb-1 flex items-center gap-2">
-                <span className={`w-2 h-2 rounded-full ${metrics.transcribedText && metrics.transcribedText !== '(transcribing...)' ? 'bg-score-perfect' : 'bg-muted-foreground'} animate-pulse`} />
-                {isTranscriptionDisabled
-                  ? `Transcription disabled${transcriptionError ? `: ${transcriptionError}` : ''}`
-                  : 'Live transcription (Speechmatics Hindi)'}
-              </p>
-              <p className="text-sm text-foreground italic truncate">
-                {metrics.transcribedText ? `"${metrics.transcribedText}"` : '(listening...)'}
-              </p>
-              <p className="text-xs text-muted-foreground/70 mt-1">
-                Diction: {metrics.diction} | Voice: {metrics.isVoiceDetected ? 'Yes' : 'No'}
-              </p>
+            <div className="hidden md:flex items-center gap-3">
+              <div className="text-center">
+                <div className={`h-1 w-12 rounded-full ${getScoreColor(metrics.pitchAccuracy)}`} />
+                <p className="text-xs text-muted-foreground mt-1">Pitch</p>
+              </div>
+              <div className="text-center">
+                <div className={`h-1 w-12 rounded-full ${getScoreColor(metrics.diction)}`} />
+                <p className="text-xs text-muted-foreground mt-1">Diction</p>
+              </div>
+              <div className="text-center">
+                <div className={`h-1 w-12 rounded-full ${getScoreColor(metrics.technique)}`} />
+                <p className="text-xs text-muted-foreground mt-1">Technique</p>
+              </div>
+              <div className="text-center">
+                <div className={`h-1 w-12 rounded-full ${getScoreColor(metrics.rhythm)}`} />
+                <p className="text-xs text-muted-foreground mt-1">Rhythm</p>
+              </div>
             </div>
           )}
-          
-          {/* Scoring Weights Info */}
-          <div className="mb-3 p-2 bg-muted/30 rounded-lg border border-border/30">
-            <p className="text-xs text-muted-foreground text-center">
-              <span className="font-medium text-foreground">Scoring:</span>{' '}
-              Pitch <span className="text-primary">30%</span> • Diction <span className="text-primary">30%</span> • Technique <span className="text-primary">20%</span> • Rhythm <span className="text-primary">20%</span> − Deductions
-            </p>
-          </div>
-          
-          {/* Metrics - 6 columns: 4 metrics + deductions + score */}
-          <div className="grid grid-cols-6 gap-2 md:gap-3 mb-4">
-            <ScoreItem 
-              label="Pitch" 
-              value={metrics.pitchAccuracy} 
-              color={getScoreColor(metrics.pitchAccuracy)}
-              isActive={metrics.isVoiceDetected}
-              hint="Note accuracy"
-              weight="30%"
-            />
-            <ScoreItem 
-              label={isModelLoading ? `Dict (${loadProgress}%)` : "Diction"} 
-              value={metrics.diction} 
-              color={getScoreColor(metrics.diction)}
-              isActive={metrics.isVoiceDetected}
-              disabled={isTranscriptionDisabled || isModelLoading}
-              onRetry={retryTranscription}
-              hint="Word match"
-              weight="30%"
-            />
-            <ScoreItem 
-              label="Technique" 
-              value={metrics.technique} 
-              color={getScoreColor(metrics.technique)}
-              isActive={metrics.isVoiceDetected}
-              hint="Vibrato/slides"
-              weight="20%"
-            />
-            <ScoreItem 
-              label="Rhythm" 
-              value={metrics.rhythm} 
-              color={getScoreColor(metrics.rhythm)}
-              isActive={metrics.isVoiceDetected}
-              hint="Beat timing"
-              weight="20%"
-            />
-            <ScoreItem 
-              label="Penalty" 
-              value={metrics.deductions} 
-              color="bg-destructive/70"
-              isActive={metrics.isVoiceDetected}
-              hint="Off-key/timing"
-              isDeduction
-            />
-            <div className="text-center">
-              <p className={`text-xl md:text-2xl font-bold ${rating.color}`}>{totalScore}</p>
-              <p className="text-[10px] text-muted-foreground">Score</p>
-            </div>
-          </div>
-          
-          {/* Progress bar */}
-          <div className="h-1 bg-muted rounded-full mb-4 overflow-hidden">
-            <div 
-              className="h-full gradient-primary transition-all duration-100"
-              style={{ width: `${duration ? (currentTime / duration) * 100 : 0}%` }}
-            />
-          </div>
-          
+
           {/* Controls */}
-          <div className="flex justify-center items-center gap-4">
-            <Button 
-              variant="outline" 
-              size="lg" 
-              onClick={toggleMic} 
-              className={`transition-all ${isMicActive ? 'bg-primary text-primary-foreground shadow-glow' : ''}`}
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={toggleMic}
+              className={isMicActive ? 'bg-primary text-primary-foreground' : ''}
             >
               {isMicActive ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
-              <span className="ml-2 hidden sm:inline">{isMicActive ? 'Mic On' : 'Mic Off'}</span>
             </Button>
             
-            <Button 
-              size="lg" 
-              onClick={togglePlay} 
+            <Button
+              size="lg"
+              onClick={togglePlay}
               disabled={!isPlayerReady}
-              className={`gradient-primary text-primary-foreground px-8 ${isPlaying ? 'animate-pulse-glow' : ''}`}
+              className="gradient-primary text-primary-foreground w-16 h-16 rounded-full"
             >
-              {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
-              <span className="ml-2">{isPlaying ? 'Pause' : 'Play'}</span>
+              {isPlaying ? <Pause className="w-8 h-8" /> : <Play className="w-8 h-8 ml-1" />}
             </Button>
-            
-            <Button variant="outline" size="lg" onClick={handleRestart}>
+
+            <Button variant="outline" size="icon" onClick={handleRestart}>
               <RotateCcw className="w-5 h-5" />
-              <span className="ml-2 hidden sm:inline">Restart</span>
             </Button>
+          </div>
+        </div>
+
+        {/* Progress Bar */}
+        <div className="max-w-4xl mx-auto mt-4">
+          <div
+            className="h-1 bg-muted rounded-full cursor-pointer"
+            onClick={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              const percent = (e.clientX - rect.left) / rect.width;
+              const newTime = percent * duration;
+              if (audioRef.current) {
+                audioRef.current.currentTime = newTime;
+              }
+              if (vocalsAudioRef.current) {
+                vocalsAudioRef.current.currentTime = newTime;
+              }
+              setCurrentTime(newTime);
+            }}
+          >
+            <div
+              className="h-full bg-primary rounded-full transition-all"
+              style={{ width: `${(currentTime / duration) * 100}%` }}
+            />
+          </div>
+          <div className="flex justify-between text-xs text-muted-foreground mt-1">
+            <span>{formatDuration(currentTime)}</span>
+            <span>{formatDuration(duration)}</span>
           </div>
         </div>
       </div>
     </div>
   );
 };
-
-interface ScoreItemProps {
-  label: string;
-  value: number;
-  color: string;
-  isActive: boolean;
-  disabled?: boolean;
-  onRetry?: () => void;
-  hint?: string;
-  weight?: string;
-  isDeduction?: boolean;
-}
-
-const ScoreItem = ({ label, value, color, isActive, disabled, onRetry, hint, weight, isDeduction }: ScoreItemProps) => (
-  <div className="text-center relative group">
-    <div className="h-1.5 bg-muted rounded-full overflow-hidden mb-1">
-      <div 
-        className={`h-full transition-all duration-200 ${disabled ? 'bg-amber-500/50' : color}`} 
-        style={{ width: `${value}%` }} 
-      />
-    </div>
-    <p className={`text-xs font-medium transition-all ${isActive ? 'scale-105' : ''} ${isDeduction && value > 0 ? 'text-destructive' : ''}`}>
-      {isDeduction && value > 0 ? '-' : ''}{Math.round(value)}%
-    </p>
-
-    {disabled && onRetry && (
-      <button
-        type="button"
-        onClick={onRetry}
-        className="mt-0.5 text-[10px] text-amber-500 hover:text-amber-400 flex items-center justify-center gap-0.5 mx-auto transition-colors"
-        title="Retry diction scoring"
-      >
-        <RefreshCw className="w-2.5 h-2.5" />
-        <span>Retry</span>
-      </button>
-    )}
-    <p className="text-[10px] text-muted-foreground truncate">
-      {label} {weight && <span className="text-primary/70">({weight})</span>}
-    </p>
-    {hint && (
-      <p className="text-[8px] text-muted-foreground/60 opacity-0 group-hover:opacity-100 transition-opacity truncate">
-        {hint}
-      </p>
-    )}
-  </div>
-);
 
 export default Sing;
