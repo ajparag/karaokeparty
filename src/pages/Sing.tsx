@@ -78,7 +78,7 @@ const Sing = () => {
   
   // Main instrumental audio
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  // Vocals audio (plays at 80% volume when enabled)
+  // Vocals audio (plays at 50% volume when enabled)
   const vocalsAudioRef = useRef<HTMLAudioElement | null>(null);
   const timeSyncRafRef = useRef<number | null>(null);
   const scoreAccumulatorRef = useRef({ pitch: 0, rhythm: 0, diction: 0, technique: 0, deductions: 0, count: 0 });
@@ -111,8 +111,8 @@ const Sing = () => {
     reset: resetSeparation,
   } = useVocalSeparation();
 
-  // Vocals ON/OFF toggle (plays vocals at 80% volume when ON)
-  const [vocalsEnabled, setVocalsEnabled] = useState(false);
+  // Vocals ON/OFF toggle (plays vocals at 50% volume when ON)
+  const [vocalsEnabled, setVocalsEnabled] = useState(true);
 
   // Load track and pre-fetched lyrics from session storage
   useEffect(() => {
@@ -274,7 +274,7 @@ const Sing = () => {
     vocalsAudio.crossOrigin = "anonymous";
     vocalsAudio.src = separatedAudio.vocalsUrl;
     vocalsAudio.preload = "auto";
-    vocalsAudio.volume = 0.8; // 80% volume
+    vocalsAudio.volume = 0.5; // 50% volume
     vocalsAudioRef.current = vocalsAudio;
 
     return () => {
@@ -316,11 +316,11 @@ const Sing = () => {
     }
   }, [volume, isMuted]);
 
-  // Vocals volume is independent - 80% of master, and controlled by vocalsEnabled
+  // Vocals volume is independent - 50% of master, and controlled by vocalsEnabled
   useEffect(() => {
     if (vocalsAudioRef.current) {
-      // Vocals at 80% of the master volume, but only if enabled
-      const vocalsVolume = vocalsEnabled ? (volume / 100) * 0.8 : 0;
+      // Vocals at 50% of the master volume, but only if enabled
+      const vocalsVolume = vocalsEnabled ? (volume / 100) * 0.5 : 0;
       vocalsAudioRef.current.volume = isMuted ? 0 : vocalsVolume;
       vocalsAudioRef.current.muted = isMuted || !vocalsEnabled;
     }
