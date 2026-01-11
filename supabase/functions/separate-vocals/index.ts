@@ -85,24 +85,35 @@ serve(async (req) => {
     console.log("[separate-vocals] Separation complete, processing result...");
 
     // The result.data contains the separated tracks
-    // For abidlabs/music-separation, it returns { vocals: url, no_vocals: url } or similar
     const data = result.data as any;
     
+    console.log("[separate-vocals] Raw result data:", JSON.stringify(data, null, 2));
+    
     // Different Spaces have different output formats
-    // abidlabs/music-separation typically returns instrumental (no_vocals) and vocals separately
     let instrumentalUrl: string | null = null;
     let vocalsUrl: string | null = null;
 
     if (Array.isArray(data)) {
-      // Some Spaces return [instrumental, vocals] as array of objects with url
+      // abidlabs/music-separation returns array: [vocals, no_vocals] based on testing
+      // Check filenames to determine which is which
       for (const item of data) {
         if (item && typeof item === 'object' && 'url' in item) {
-          // First one is typically instrumental/no-vocals
-          if (!instrumentalUrl) {
-            instrumentalUrl = item.url;
-          } else if (!vocalsUrl) {
-            vocalsUrl = item.url;
+          const url = item.url as string;
+          // Determine by filename in URL
+          if (url.includes('no_vocals') || url.includes('instrumental') || url.includes('accompaniment')) {
+            instrumentalUrl = url;
+          } else if (url.includes('vocals')) {
+            vocalsUrl = url;
           }
+        }
+      }
+      
+      // If we couldn't determine by name, the Space returns [vocals, no_vocals] order
+      if (!instrumentalUrl && !vocalsUrl && data.length >= 2) {
+        if (data[0]?.url && data[1]?.url) {
+          vocalsUrl = data[0].url;        // First is vocals
+          instrumentalUrl = data[1].url;   // Second is instrumental/no_vocals
+          console.log("[separate-vocals] Using positional assignment: vocals first, instrumental second");
         }
       }
     } else if (data && typeof data === 'object') {
