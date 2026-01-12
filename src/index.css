@@ -75,6 +75,46 @@
     font-family: 'Poppins', sans-serif;
     font-weight: 600;
   }
+
+  /* Big screen / Smart TV optimizations (screens >= 1920px wide) */
+  @media (min-width: 1920px) {
+    html {
+      font-size: 20px; /* Base size increase for better TV visibility */
+    }
+    
+    body {
+      font-size: 1.25rem;
+    }
+    
+    h1 { font-size: 3.5rem; }
+    h2 { font-size: 2.75rem; }
+    h3 { font-size: 2rem; }
+    h4 { font-size: 1.5rem; }
+    
+    p, span, button, input, label {
+      font-size: 1.25rem;
+    }
+  }
+
+  /* Extra large screens (4K TVs, >= 2560px) */
+  @media (min-width: 2560px) {
+    html {
+      font-size: 24px;
+    }
+    
+    body {
+      font-size: 1.5rem;
+    }
+    
+    h1 { font-size: 4.5rem; }
+    h2 { font-size: 3.5rem; }
+    h3 { font-size: 2.5rem; }
+    h4 { font-size: 2rem; }
+    
+    p, span, button, input, label {
+      font-size: 1.5rem;
+    }
+  }
 }
 
 @layer utilities {
