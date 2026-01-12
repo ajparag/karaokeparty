@@ -344,9 +344,9 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       }
     }
 
-    // Calculate pitch accuracy
+    // Calculate pitch accuracy - only when voice is detected
     let pitchAccuracy = 0;
-    if (pitchHistoryRef.current.length > 5) {
+    if (isVoiceDetected && pitchHistoryRef.current.length > 5) {
       const recentPitches = pitchHistoryRef.current.slice(-10);
       const avgPitch = recentPitches.reduce((a, b) => a + b, 0) / recentPitches.length;
       const variance = recentPitches.reduce((sum, p) => sum + Math.pow(p - avgPitch, 2), 0) / recentPitches.length;
@@ -355,15 +355,15 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       pitchAccuracy = Math.max(0, 100 - (normalizedVariance * 200));
       
       // Deduction: Extreme off-key detection (>25% variance = off-key noise)
-      if (normalizedVariance > 0.25 && isVoiceDetected) {
+      if (normalizedVariance > 0.25) {
         offKeyCountRef.current += 1;
         deductionScoreRef.current = Math.min(100, deductionScoreRef.current + 0.3);
       }
     }
 
-    // Calculate rhythm consistency
+    // Calculate rhythm consistency - only when voice is detected
     let rhythm = 0;
-    if (beatTimesRef.current.length > 3) {
+    if (isVoiceDetected && beatTimesRef.current.length > 3) {
       const intervals: number[] = [];
       for (let i = 1; i < beatTimesRef.current.length; i++) {
         intervals.push(beatTimesRef.current[i] - beatTimesRef.current[i - 1]);
@@ -375,9 +375,9 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       rhythm = Math.max(0, 100 - (normalizedIntervalVariance * 200));
     }
 
-    // Calculate technique score (vibrato + glissando detection)
+    // Calculate technique score (vibrato + glissando detection) - only when voice is detected
     let technique = 0;
-    if (vibratoHistoryRef.current.length >= 10) {
+    if (isVoiceDetected && vibratoHistoryRef.current.length >= 10) {
       const pitches = vibratoHistoryRef.current.slice(-20);
       
       // Vibrato detection: Look for oscillations in 5-8 Hz range
