@@ -913,7 +913,7 @@ const Sing = () => {
                 <p className="text-muted-foreground mt-4">Loading lyrics...</p>
               </div>
             ) : (
-              lyrics.slice(Math.max(0, currentLineIndex - 1), currentLineIndex + 5).map((line, i) => {
+              lyrics.slice(Math.max(0, currentLineIndex - 1), currentLineIndex + 4).map((line, i) => {
                 const actualIndex = Math.max(0, currentLineIndex - 1) + i;
                 const isCurrent = actualIndex === currentLineIndex;
                 const isPast = actualIndex < currentLineIndex;
