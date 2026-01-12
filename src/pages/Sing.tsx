@@ -935,13 +935,13 @@ const Sing = () => {
                 return (
                   <div
                     key={actualIndex}
-                    className={`text-center transition-all duration-300 w-full ${
-                      isCurrent
-                        ? 'text-2xl md:text-4xl font-bold scale-100 opacity-100'
-                        : isPast
-                          ? 'text-lg md:text-xl opacity-40 scale-95'
-                          : 'text-lg md:text-xl opacity-60 scale-95'
-                    }`}
+                  className={`text-center transition-all duration-300 w-full ${
+                    isCurrent
+                      ? 'text-2xl md:text-4xl 2xl:text-5xl 3xl:text-6xl font-bold scale-100 opacity-100'
+                      : isPast
+                        ? 'text-lg md:text-xl 2xl:text-2xl 3xl:text-3xl opacity-40 scale-95'
+                        : 'text-lg md:text-xl 2xl:text-2xl 3xl:text-3xl opacity-60 scale-95'
+                  }`}
                   >
                     <div className="relative inline-block">
                       <span className="text-muted-foreground">{line.text}</span>
@@ -1016,10 +1016,11 @@ const Sing = () => {
             <Button
               size="lg"
               onClick={togglePlay}
-              disabled={!isPlayerReady}
-              className="gradient-primary text-primary-foreground w-16 h-16 rounded-full"
+              disabled={!isPlayerReady || isSeparating || !separatedAudio}
+              className="gradient-primary text-primary-foreground w-16 h-16 rounded-full disabled:opacity-50"
+              title={!separatedAudio ? 'Waiting for AI separation...' : isPlaying ? 'Pause' : 'Play'}
             >
-              {isPlaying ? <Pause className="w-8 h-8" /> : <Play className="w-8 h-8 ml-1" />}
+              {isSeparating ? <Loader2 className="w-8 h-8 animate-spin" /> : isPlaying ? <Pause className="w-8 h-8" /> : <Play className="w-8 h-8 ml-1" />}
             </Button>
 
             <Button variant="outline" size="icon" onClick={handleRestart}>
