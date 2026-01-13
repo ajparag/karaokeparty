@@ -12,6 +12,13 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { ArrowLeft, Play, Pause, Mic, MicOff, RotateCcw, Save, Volume2, VolumeX, Edit2, Search, RefreshCw, Music, Check, Music2, Loader2, Sparkles } from "lucide-react";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { supabase } from "@/integrations/supabase/client";
@@ -817,6 +824,26 @@ const Sing = () => {
           />
         </div>
       </header>
+
+      {/* AI Separation Processing Dialog */}
+      <AlertDialog open={isSeparating || (!separatedAudio && isLoadingAudio && !!track)}>
+        <AlertDialogContent className="max-w-sm">
+          <AlertDialogHeader className="text-center">
+            <div className="flex justify-center mb-4">
+              <div className="relative">
+                <Loader2 className="w-12 h-12 animate-spin text-primary" />
+                <Sparkles className="w-5 h-5 text-primary absolute -top-1 -right-1 animate-pulse" />
+              </div>
+            </div>
+            <AlertDialogTitle className="text-xl 2xl:text-2xl 3xl:text-3xl">
+              We are getting your song ready...
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-base 2xl:text-lg 3xl:text-xl">
+              {separationProgress || "AI is separating vocals from the track for the best karaoke experience."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Results Overlay */}
       {showResults && (
