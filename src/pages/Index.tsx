@@ -169,20 +169,19 @@ const Index = () => {
     setLyricsSearchResults([]);
     setSelectedLyricsId("");
 
-    // Pre-fill with cleaned track info
+    // Pre-fill with cleaned track info (artist blank by default for better LRCLIB matches)
     const cleanTitle = track.title
       ?.replace(/\(.*?\)/g, '')
       ?.replace(/\[.*?\]/g, '')
       ?.replace(/karaoke|instrumental|lyrics|official|video|audio|hd|4k/gi, '')
       ?.trim() || '';
-    const cleanArtist = track.artist?.trim() || '';
 
     setLyricsSearchTitle(cleanTitle);
-    setLyricsSearchArtist(cleanArtist);
+    setLyricsSearchArtist('');
     setLyricsDialogOpen(true);
 
-    // Auto-fetch lyrics with multiple results
-    fetchLyrics(cleanTitle, cleanArtist);
+    // Auto-fetch lyrics with multiple results (no artist for broader search)
+    fetchLyrics(cleanTitle, '');
   };
 
   const fetchLyrics = async (title: string, artist: string) => {
