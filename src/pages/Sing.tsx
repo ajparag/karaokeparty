@@ -453,10 +453,9 @@ const Sing = () => {
       ?.replace(/karaoke|instrumental|lyrics|official|video|audio|hd|4k/gi, '')
       ?.replace(/&quot;|&amp;/g, '')
       ?.trim() || '';
-    const cleanArtist = track?.artist?.trim() || '';
     
     setLyricsSearchTitle(cleanTitle);
-    setLyricsSearchArtist(cleanArtist);
+    setLyricsSearchArtist('');
     setLyricsSearchResults([]);
     setSelectedLyricsId("");
     setLyricsDialogOpen(true);
