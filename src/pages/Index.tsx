@@ -22,7 +22,7 @@ interface Track {
   artist: string;
   thumbnail: string;
   duration: string;
-  source: 'saavn';
+  source: "saavn";
   audioUrl: string;
   album?: string;
 }
@@ -65,78 +65,77 @@ const Index = () => {
 
   // Clear any cached data on homepage load
   useEffect(() => {
-    sessionStorage.removeItem('selectedTrack');
-    sessionStorage.removeItem('prefetchedLyrics');
+    sessionStorage.removeItem("selectedTrack");
+    sessionStorage.removeItem("prefetchedLyrics");
   }, []);
 
   // Fetch trending Hindi songs on mount with randomized queries
   useEffect(() => {
     const trendingQueries = [
-      'new hindi songs 2024',
-      'latest bollywood hits',
-      'trending hindi songs',
-      'top hindi songs 2024',
-      'bollywood new releases',
-      'hindi chart toppers',
-      'latest arijit singh songs',
-      'new romantic hindi songs',
-      'bollywood party songs 2024',
-      'hindi love songs new'
+      "new hindi songs 2024",
+      "latest bollywood hits",
+      "trending hindi songs",
+      "top hindi songs 2024",
+      "bollywood new releases",
+      "hindi chart toppers",
+      "latest arijit singh songs",
+      "new romantic hindi songs",
+      "bollywood party songs 2024",
+      "hindi love songs new",
     ];
-    
+
     const fetchTrending = async () => {
       try {
         // Pick a random query for variety
         const randomQuery = trendingQueries[Math.floor(Math.random() * trendingQueries.length)];
-        
-        const { data, error } = await supabase.functions.invoke('search-music', {
-          body: { query: randomQuery, limit: 10 }
+
+        const { data, error } = await supabase.functions.invoke("search-music", {
+          body: { query: randomQuery, limit: 10 },
         });
-        
+
         if (!error && data?.tracks?.length > 0) {
           // Extract unique song titles (clean them up)
           const titles = data.tracks
             .slice(0, 8)
-            .map((t: Track) => t.title
-              .replace(/\(.*?\)/g, '')
-              .replace(/\[.*?\]/g, '')
-              .replace(/-.*$/, '')
-              .trim()
+            .map((t: Track) =>
+              t.title
+                .replace(/\(.*?\)/g, "")
+                .replace(/\[.*?\]/g, "")
+                .replace(/-.*$/, "")
+                .trim(),
             )
-            .filter((t: string, i: number, arr: string[]) => 
-              t.length > 0 && t.length < 25 && arr.indexOf(t) === i
-            )
+            .filter((t: string, i: number, arr: string[]) => t.length > 0 && t.length < 25 && arr.indexOf(t) === i)
             .slice(0, 5);
-          
+
           if (titles.length > 0) {
             setTrendingSongs(titles);
           }
         }
       } catch (error) {
-        console.error('Failed to fetch trending:', error);
+        console.error("Failed to fetch trending:", error);
       } finally {
         setIsLoadingTrending(false);
       }
     };
-    
+
     fetchTrending();
   }, []);
 
   const handleSearch = async () => {
     if (!query.trim()) return;
-    
+
     setIsLoading(true);
     setHasSearched(true);
-    
+
     try {
-      const { data, error } = await supabase.functions.invoke('search-music', {
-        body: { query: query.trim() }
+      const { data, error } = await supabase.functions.invoke("search-music", {
+        body: { query: query.trim() },
       });
-      
+
       if (error) throw error;
-      
+
       setTracks(data?.tracks || []);
-      
+
       if (data?.tracks?.length === 0) {
         toast({
           title: "No tracks found",
@@ -144,7 +143,7 @@ const Index = () => {
         });
       }
     } catch (error) {
-      console.error('Search error:', error);
+      console.error("Search error:", error);
       toast({
         title: "Search failed",
         description: "Please try again later",
@@ -157,7 +156,7 @@ const Index = () => {
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
+    if (e.key === "Enter") {
       handleSearch();
     }
   };
@@ -170,18 +169,19 @@ const Index = () => {
     setSelectedLyricsId("");
 
     // Pre-fill with cleaned track info (artist blank by default for better LRCLIB matches)
-    const cleanTitle = track.title
-      ?.replace(/\(.*?\)/g, '')
-      ?.replace(/\[.*?\]/g, '')
-      ?.replace(/karaoke|instrumental|lyrics|official|video|audio|hd|4k/gi, '')
-      ?.trim() || '';
+    const cleanTitle =
+      track.title
+        ?.replace(/\(.*?\)/g, "")
+        ?.replace(/\[.*?\]/g, "")
+        ?.replace(/karaoke|instrumental|lyrics|official|video|audio|hd|4k/gi, "")
+        ?.trim() || "";
 
     setLyricsSearchTitle(cleanTitle);
-    setLyricsSearchArtist('');
+    setLyricsSearchArtist("");
     setLyricsDialogOpen(true);
 
     // Auto-fetch lyrics with multiple results (no artist for broader search)
-    fetchLyrics(cleanTitle, '');
+    fetchLyrics(cleanTitle, "");
   };
 
   const fetchLyrics = async (title: string, artist: string) => {
@@ -189,8 +189,8 @@ const Index = () => {
     setLyricsSearchResults([]);
     setSelectedLyricsId("");
     try {
-      const { data } = await supabase.functions.invoke('fetch-lyrics', {
-        body: { title, artist, searchMultiple: true }
+      const { data } = await supabase.functions.invoke("fetch-lyrics", {
+        body: { title, artist, searchMultiple: true },
       });
       if (data?.results && data.results.length > 0) {
         setLyricsSearchResults(data.results);
@@ -201,16 +201,16 @@ const Index = () => {
         toast({
           title: "No lyrics found",
           description: "Try editing the title/artist and search again",
-          variant: "destructive"
+          variant: "destructive",
         });
       }
     } catch (error) {
-      console.error('Failed to fetch lyrics:', error);
+      console.error("Failed to fetch lyrics:", error);
       setFetchedLyrics([]);
       toast({
         title: "Failed to fetch lyrics",
         description: "Try editing the title and search again",
-        variant: "destructive"
+        variant: "destructive",
       });
     } finally {
       setIsSearchingLyrics(false);
@@ -227,22 +227,22 @@ const Index = () => {
 
   const handleStartSinging = () => {
     if (!selectedTrack) return;
-    
+
     // Store track and lyrics in sessionStorage
-    sessionStorage.setItem('selectedTrack', JSON.stringify(selectedTrack));
-    sessionStorage.setItem('prefetchedLyrics', JSON.stringify(fetchedLyrics));
-    
+    sessionStorage.setItem("selectedTrack", JSON.stringify(selectedTrack));
+    sessionStorage.setItem("prefetchedLyrics", JSON.stringify(fetchedLyrics));
+
     setLyricsDialogOpen(false);
     navigate(`/sing/${selectedTrack.id}`);
   };
 
   const handleSkipLyrics = () => {
     if (!selectedTrack) return;
-    
+
     // Store track without lyrics
-    sessionStorage.setItem('selectedTrack', JSON.stringify(selectedTrack));
-    sessionStorage.removeItem('prefetchedLyrics');
-    
+    sessionStorage.setItem("selectedTrack", JSON.stringify(selectedTrack));
+    sessionStorage.removeItem("prefetchedLyrics");
+
     setLyricsDialogOpen(false);
     navigate(`/sing/${selectedTrack.id}`);
   };
@@ -256,7 +256,7 @@ const Index = () => {
           <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-primary/20 rounded-full blur-3xl" />
           <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-secondary/20 rounded-full blur-3xl" />
         </div>
-        
+
         {/* Content */}
         <div className="relative z-10 text-center max-w-4xl mx-auto w-full">
           {/* Logo/Title */}
@@ -265,21 +265,19 @@ const Index = () => {
               <Mic className="w-10 h-10 text-primary-foreground" />
             </div>
           </div>
-          
+
           <h1 className="text-5xl md:text-7xl font-bold mb-6 tracking-tight">
             <span className="text-gradient">गाओ</span>
             <span className="text-foreground"> Karaoke</span>
           </h1>
-          
-          <p className="text-xl md:text-2xl text-muted-foreground mb-4 font-medium">
-            Sing Bollywood, Tollywood & More
-          </p>
-          
+
+          <p className="text-xl md:text-2xl text-muted-foreground mb-4 font-medium">Sing Bollywood, Tollywood & More</p>
+
           <p className="text-muted-foreground mb-8 max-w-2xl mx-auto">
-            Your ultimate Indian karaoke experience. Search instrumental tracks, 
-            follow synced lyrics, and get scored on your vocal performance.
+            Your ultimate Indian karaoke experience. Search instrumental tracks, follow synced lyrics, and get scored on
+            your vocal performance.
           </p>
-          
+
           {/* Search Section */}
           <div className="max-w-xl mx-auto mb-8">
             <div className="flex gap-2">
@@ -307,14 +305,17 @@ const Index = () => {
                 )}
               </Button>
             </div>
-            
+
             {/* Trending searches */}
             <div className="mt-4">
               <p className="text-sm text-muted-foreground mb-2">
-                {isLoadingTrending ? 'Loading trending...' : 'Trending:'}
+                {isLoadingTrending ? "Loading trending..." : "Trending:"}
               </p>
               <div className="flex flex-wrap justify-center gap-2">
-                {(trendingSongs.length > 0 ? trendingSongs : ['Tum Hi Ho', 'Kesariya', 'Kal Ho Naa Ho', 'Chaiyya Chaiyya', 'Mere Sapno Ki Rani']).map((term) => (
+                {(trendingSongs.length > 0
+                  ? trendingSongs
+                  : ["Tum Hi Ho", "Kesariya", "Kal Ho Naa Ho", "Chaiyya Chaiyya", "Mere Sapno Ki Rani"]
+                ).map((term) => (
                   <Button
                     key={term}
                     variant="outline"
@@ -331,7 +332,7 @@ const Index = () => {
               </div>
             </div>
           </div>
-          
+
           {/* Search Results */}
           {hasSearched && (
             <div className="max-w-2xl mx-auto text-left mb-8">
@@ -347,9 +348,9 @@ const Index = () => {
               ) : (
                 <div className="space-y-2 max-h-80 overflow-y-auto pr-2">
                   <p className="text-muted-foreground text-sm mb-3">
-                    Found {tracks.length} track{tracks.length !== 1 ? 's' : ''}
+                    Found {tracks.length} track{tracks.length !== 1 ? "s" : ""}
                   </p>
-                  
+
                   {tracks.map((track) => (
                     <div
                       key={track.id}
@@ -360,11 +361,7 @@ const Index = () => {
                         {/* Thumbnail */}
                         <div className="relative w-12 h-12 rounded-lg overflow-hidden bg-muted shrink-0">
                           {track.thumbnail ? (
-                            <img
-                              src={track.thumbnail}
-                              alt={track.title}
-                              className="w-full h-full object-cover"
-                            />
+                            <img src={track.thumbnail} alt={track.title} className="w-full h-full object-cover" />
                           ) : (
                             <div className="w-full h-full flex items-center justify-center">
                               <Music className="w-5 h-5 text-muted-foreground" />
@@ -374,7 +371,7 @@ const Index = () => {
                             <Play className="w-5 h-5 text-primary fill-primary" />
                           </div>
                         </div>
-                        
+
                         {/* Info */}
                         <div className="flex-1 min-w-0">
                           <h3 className="font-semibold text-sm truncate group-hover:text-primary transition-colors">
@@ -384,7 +381,7 @@ const Index = () => {
                             {track.artist} • {track.duration}
                           </p>
                         </div>
-                        
+
                         {/* Action */}
                         <Button
                           size="sm"
@@ -399,18 +396,18 @@ const Index = () => {
               )}
             </div>
           )}
-          
+
           {/* Language badges */}
           {!hasSearched && (
             <div className="flex flex-wrap justify-center gap-2 mb-8">
-              {['Hindi', 'Marathi', 'Gujarati', 'Punjabi', 'Tamil', 'Telugu', 'Malayalam'].map((lang) => (
+              {["Hindi", "Marathi", "Gujarati", "Punjabi", "Tamil", "Telugu", "Malayalam"].map((lang) => (
                 <span key={lang} className="language-badge text-muted-foreground">
                   {lang}
                 </span>
               ))}
             </div>
           )}
-          
+
           {/* Secondary CTA */}
           <div className="flex justify-center">
             <Link to="/leaderboard">
@@ -422,10 +419,10 @@ const Index = () => {
           </div>
         </div>
       </div>
-      
+
       {/* Lyrics Search Dialog */}
       <Dialog open={lyricsDialogOpen} onOpenChange={setLyricsDialogOpen}>
-        <DialogContent 
+        <DialogContent
           className="sm:max-w-lg bg-card max-h-[80vh] overflow-hidden flex flex-col"
           onOpenAutoFocus={(e) => e.preventDefault()}
         >
@@ -461,7 +458,7 @@ const Index = () => {
                 placeholder="e.g., Tum Hi Ho"
                 value={lyricsSearchTitle}
                 onChange={(e) => setLyricsSearchTitle(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleLyricsSearch()}
+                onKeyDown={(e) => e.key === "Enter" && handleLyricsSearch()}
                 autoFocus={false}
               />
             </div>
@@ -472,7 +469,7 @@ const Index = () => {
                 placeholder="e.g., Arijit Singh"
                 value={lyricsSearchArtist}
                 onChange={(e) => setLyricsSearchArtist(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleLyricsSearch()}
+                onKeyDown={(e) => e.key === "Enter" && handleLyricsSearch()}
               />
             </div>
 
@@ -513,8 +510,8 @@ const Index = () => {
                       key={result.id}
                       className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
                         selectedLyricsId === String(result.id)
-                          ? 'border-primary bg-primary/10'
-                          : 'border-border hover:border-primary/50'
+                          ? "border-primary bg-primary/10"
+                          : "border-border hover:border-primary/50"
                       }`}
                     >
                       <RadioGroupItem value={String(result.id)} className="mt-1" />
@@ -529,16 +526,14 @@ const Index = () => {
                           )}
                           <span
                             className={`text-xs px-1.5 py-0.5 rounded ${
-                              result.synced ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'
+                              result.synced ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"
                             }`}
                           >
-                            {result.synced ? 'Synced' : 'Plain'}
+                            {result.synced ? "Synced" : "Plain"}
                           </span>
                         </div>
                       </div>
-                      {selectedLyricsId === String(result.id) && (
-                        <Check className="w-4 h-4 text-primary mt-1" />
-                      )}
+                      {selectedLyricsId === String(result.id) && <Check className="w-4 h-4 text-primary mt-1" />}
                     </label>
                   ))}
                 </RadioGroup>
@@ -558,17 +553,14 @@ const Index = () => {
             <Button variant="outline" onClick={handleSkipLyrics} className="w-full sm:w-auto">
               Skip Lyrics
             </Button>
-            <Button
-              onClick={handleStartSinging}
-              className="gradient-primary text-primary-foreground w-full sm:w-auto"
-            >
+            <Button onClick={handleStartSinging} className="gradient-primary text-primary-foreground w-full sm:w-auto">
               <Mic className="w-4 h-4 mr-2" />
               Start Singing
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      
+
       {/* Features Section */}
       <div className="py-16 px-4 border-t border-border">
         <div className="max-w-6xl mx-auto grid md:grid-cols-3 gap-8">
@@ -589,10 +581,10 @@ const Index = () => {
           />
         </div>
       </div>
-      
+
       {/* Footer */}
       <footer className="py-6 px-4 border-t border-border text-center text-muted-foreground text-sm">
-        <p>Built with ❤️ for Indian music lovers</p>
+        <p>Built with ❤️ for Indian music lovers by ajparag@gmail.com</p>
       </footer>
     </div>
   );
