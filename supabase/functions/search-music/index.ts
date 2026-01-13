@@ -30,10 +30,8 @@ function formatDuration(seconds: number): string {
 // JioSaavn API search
 async function searchSaavn(query: string): Promise<Track[]> {
   try {
-    // Append tags to help find instrumental/karaoke versions
-    const enhancedQuery = `${query} instrumental original official`;
-    const searchQuery = encodeURIComponent(enhancedQuery);
-    console.log('Enhanced search query:', enhancedQuery);
+    const searchQuery = encodeURIComponent(query);
+    console.log('Searching Saavn for:', query);
     
     const response = await fetch(
       `https://saavn.sumit.co/api/search/songs?query=${searchQuery}&page=0&limit=20`,
