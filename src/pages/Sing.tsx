@@ -629,9 +629,9 @@ const Sing = () => {
   };
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="h-[100dvh] bg-background flex flex-col overflow-hidden">
       {/* Header */}
-      <header className="glass border-b border-border p-4 flex items-center gap-4 shrink-0">
+      <header className="glass border-b border-border p-2 md:p-4 flex items-center gap-2 md:gap-4 shrink-0">
         <Button variant="ghost" size="icon" onClick={() => navigate('/')}>
           <ArrowLeft className="w-5 h-5" />
         </Button>
@@ -922,16 +922,16 @@ const Sing = () => {
       )}
 
       {/* Lyrics Display */}
-      <div className="flex-1 flex flex-col items-center justify-center p-4 md:p-8 overflow-hidden">
+      <div className="flex-1 flex flex-col items-center justify-center p-2 md:p-8 overflow-hidden min-h-0">
         {!isPlayerReady ? (
-          <div className="text-center py-12">
-            <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mx-auto mb-4 animate-pulse">
-              <Play className="w-8 h-8 text-muted-foreground" />
+          <div className="text-center py-4 md:py-12">
+            <div className="w-12 h-12 md:w-16 md:h-16 rounded-full bg-muted flex items-center justify-center mx-auto mb-2 md:mb-4 animate-pulse">
+              <Play className="w-6 h-6 md:w-8 md:h-8 text-muted-foreground" />
             </div>
-            <p className="text-muted-foreground">Loading audio...</p>
+            <p className="text-sm md:text-base text-muted-foreground">Loading audio...</p>
           </div>
         ) : (
-          <div className="w-full max-w-4xl space-y-3 flex flex-col items-center">
+          <div className="w-full max-w-4xl space-y-1 md:space-y-3 flex flex-col items-center">
             {lyrics.length === 0 ? (
               <div className="text-center py-12">
                 <div className="animate-shimmer h-12 rounded-lg mb-3" />
@@ -964,10 +964,10 @@ const Sing = () => {
                     key={actualIndex}
                   className={`text-center transition-all duration-300 w-full ${
                     isCurrent
-                      ? 'text-2xl md:text-4xl 2xl:text-5xl 3xl:text-6xl font-bold scale-100 opacity-100'
+                      ? 'text-xl md:text-4xl 2xl:text-5xl 3xl:text-6xl font-bold scale-100 opacity-100'
                       : isPast
-                        ? 'text-lg md:text-xl 2xl:text-2xl 3xl:text-3xl opacity-40 scale-95'
-                        : 'text-lg md:text-xl 2xl:text-2xl 3xl:text-3xl opacity-60 scale-95'
+                        ? 'text-base md:text-xl 2xl:text-2xl 3xl:text-3xl opacity-40 scale-95'
+                        : 'text-base md:text-xl 2xl:text-2xl 3xl:text-3xl opacity-60 scale-95'
                   }`}
                   >
                     <div className="relative inline-block">
@@ -995,14 +995,14 @@ const Sing = () => {
       </div>
 
       {/* Score Display */}
-      <div className="glass border-t border-border p-4 shrink-0">
+      <div className="glass border-t border-border p-2 md:p-4 shrink-0">
         <div className="flex items-center justify-between max-w-4xl mx-auto">
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 md:gap-4">
             <div className="text-center">
-              <p className="text-3xl font-bold text-gradient-gold">{totalScore}</p>
-              <p className="text-xs text-muted-foreground">Score</p>
+              <p className="text-xl md:text-3xl font-bold text-gradient-gold">{totalScore}</p>
+              <p className="text-[10px] md:text-xs text-muted-foreground">Score</p>
             </div>
-            <div className={`text-2xl font-bold ${rating.color}`}>
+            <div className={`text-lg md:text-2xl font-bold ${rating.color}`}>
               {rating.letter}
             </div>
           </div>
@@ -1030,34 +1030,34 @@ const Sing = () => {
           )}
 
           {/* Controls */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 md:gap-2">
             <Button
               variant="outline"
               size="icon"
               onClick={toggleMic}
-              className={isMicActive ? 'bg-primary text-primary-foreground' : ''}
+              className={`w-9 h-9 md:w-10 md:h-10 ${isMicActive ? 'bg-primary text-primary-foreground' : ''}`}
             >
-              {isMicActive ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
+              {isMicActive ? <Mic className="w-4 h-4 md:w-5 md:h-5" /> : <MicOff className="w-4 h-4 md:w-5 md:h-5" />}
             </Button>
             
             <Button
               size="lg"
               onClick={togglePlay}
               disabled={!isPlayerReady || isSeparating || !separatedAudio}
-              className="gradient-primary text-primary-foreground w-16 h-16 rounded-full disabled:opacity-50"
+              className="gradient-primary text-primary-foreground w-12 h-12 md:w-16 md:h-16 rounded-full disabled:opacity-50"
               title={!separatedAudio ? 'Waiting for AI separation...' : isPlaying ? 'Pause' : 'Play'}
             >
-              {isSeparating ? <Loader2 className="w-8 h-8 animate-spin" /> : isPlaying ? <Pause className="w-8 h-8" /> : <Play className="w-8 h-8 ml-1" />}
+              {isSeparating ? <Loader2 className="w-6 h-6 md:w-8 md:h-8 animate-spin" /> : isPlaying ? <Pause className="w-6 h-6 md:w-8 md:h-8" /> : <Play className="w-6 h-6 md:w-8 md:h-8 ml-0.5" />}
             </Button>
 
-            <Button variant="outline" size="icon" onClick={handleRestart}>
-              <RotateCcw className="w-5 h-5" />
+            <Button variant="outline" size="icon" onClick={handleRestart} className="w-9 h-9 md:w-10 md:h-10">
+              <RotateCcw className="w-4 h-4 md:w-5 md:h-5" />
             </Button>
           </div>
         </div>
 
         {/* Progress Bar */}
-        <div className="max-w-4xl mx-auto mt-4">
+        <div className="max-w-4xl mx-auto mt-2 md:mt-4">
           <div
             className="h-1 bg-muted rounded-full cursor-pointer"
             onClick={(e) => {
@@ -1078,7 +1078,7 @@ const Sing = () => {
               style={{ width: `${(currentTime / duration) * 100}%` }}
             />
           </div>
-          <div className="flex justify-between text-xs text-muted-foreground mt-1">
+          <div className="flex justify-between text-[10px] md:text-xs text-muted-foreground mt-0.5 md:mt-1">
             <span>{formatDuration(currentTime)}</span>
             <span>{formatDuration(duration)}</span>
           </div>
