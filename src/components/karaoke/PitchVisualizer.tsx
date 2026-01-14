@@ -29,11 +29,44 @@ export function PitchVisualizer({ isActive, onRhythmData, compact = false }: Pit
 
     const initAudio = async () => {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // Set audio session to playback mode for iOS (prevents call audio routing)
+        if ('audioSession' in navigator && (navigator as any).audioSession) {
+          try {
+            (navigator as any).audioSession.type = 'playback';
+            console.log('[PitchVisualizer] Set audio session type to playback');
+          } catch (e) {
+            console.log('[PitchVisualizer] Could not set audio session type:', e);
+          }
+        }
+
+        // Request microphone with Apple-friendly constraints
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            // @ts-ignore - experimental property for Safari
+            voiceIsolation: false,
+          } 
+        });
         setHasPermission(true);
         setError(null);
 
-        audioContextRef.current = new AudioContext();
+        // Use webkitAudioContext fallback for older Safari versions
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        if (!AudioContextClass) {
+          throw new Error('AudioContext not supported');
+        }
+        
+        audioContextRef.current = new AudioContextClass({ latencyHint: 'playback' });
+        
+        // Resume AudioContext if suspended (required on iOS Safari)
+        if (audioContextRef.current.state === 'suspended') {
+          console.log('[PitchVisualizer] AudioContext suspended, resuming...');
+          await audioContextRef.current.resume();
+          console.log('[PitchVisualizer] AudioContext resumed:', audioContextRef.current.state);
+        }
+        
         analyserRef.current = audioContextRef.current.createAnalyser();
         analyserRef.current.fftSize = 2048;
         analyserRef.current.smoothingTimeConstant = 0.8;
@@ -43,8 +76,14 @@ export function PitchVisualizer({ isActive, onRhythmData, compact = false }: Pit
 
         startVisualization();
       } catch (err) {
-        console.error('Microphone access denied:', err);
-        setError('Microphone access required for scoring');
+        console.error('[PitchVisualizer] Microphone access denied:', err);
+        const errorMessage = err instanceof Error ? err.message : 'Microphone access required';
+        // Provide more helpful error for Safari/iOS users
+        if (errorMessage.includes('not allowed') || errorMessage.includes('Permission denied')) {
+          setError('Microphone blocked. Check Settings > Safari > Microphone');
+        } else {
+          setError('Microphone access required for scoring');
+        }
         setHasPermission(false);
       }
     };
