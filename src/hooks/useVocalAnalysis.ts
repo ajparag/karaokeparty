@@ -503,8 +503,14 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       streamRef.current = stream;
       setHasPermission(true);
 
+      // Use webkitAudioContext fallback for older Safari versions
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioContextClass) {
+        throw new Error('AudioContext not supported on this browser');
+      }
+
       // Create audio context with playback latency hint to favor media mode
-      const audioContext = new AudioContext({ latencyHint: 'playback' });
+      const audioContext = new AudioContextClass({ latencyHint: 'playback' });
       audioContextRef.current = audioContext;
       inputSampleRateRef.current = audioContext.sampleRate;
       console.log('[audio] AudioContext created', { sampleRate: audioContext.sampleRate, state: audioContext.state });
@@ -556,8 +562,16 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       setIsActive(true);
       analyze();
     } catch (err) {
-      console.error('Failed to start vocal analysis:', err);
-      setError('Microphone access denied');
+      console.error('[audio] Failed to start vocal analysis:', err);
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+      // Provide more helpful error for Safari/iOS users
+      if (errorMessage.includes('not allowed') || errorMessage.includes('Permission denied') || errorMessage.includes('NotAllowedError')) {
+        setError('Microphone blocked. Check Settings > Safari > Microphone');
+      } else if (errorMessage.includes('NotFoundError')) {
+        setError('No microphone found on this device');
+      } else {
+        setError('Microphone access denied');
+      }
       setHasPermission(false);
     }
   }, [detectPitch, calculateMetrics, options, connectWebSocket]);

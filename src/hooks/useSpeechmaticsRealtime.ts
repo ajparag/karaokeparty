@@ -43,19 +43,43 @@ export function useSpeechmaticsRealtime(options: UseSpeechmaticsRealtimeOptions 
     setError(null);
 
     try {
-      // Get microphone access
+      // Set audio session to playback mode for iOS (prevents call audio routing)
+      if ('audioSession' in navigator && (navigator as any).audioSession) {
+        try {
+          (navigator as any).audioSession.type = 'playback';
+          console.log('[speechmatics-rt] Set audio session type to playback');
+        } catch (e) {
+          console.log('[speechmatics-rt] Could not set audio session type:', e);
+        }
+      }
+
+      // Get microphone access with Apple-friendly constraints
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
+          // @ts-ignore - experimental property for Safari
+          voiceIsolation: false,
         },
       });
       streamRef.current = stream;
 
-      // Create AudioContext
-      const audioContext = new AudioContext();
+      // Use webkitAudioContext fallback for older Safari versions
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioContextClass) {
+        throw new Error('AudioContext not supported on this browser');
+      }
+
+      const audioContext = new AudioContextClass({ latencyHint: 'playback' });
       audioContextRef.current = audioContext;
+
+      // Resume AudioContext if suspended (required on iOS Safari)
+      if (audioContext.state === 'suspended') {
+        console.log('[speechmatics-rt] AudioContext suspended, resuming...');
+        await audioContext.resume();
+        console.log('[speechmatics-rt] AudioContext resumed:', audioContext.state);
+      }
 
       const inputSampleRate = audioContext.sampleRate;
       console.log('[speechmatics-rt] Audio context sample rate:', inputSampleRate);
