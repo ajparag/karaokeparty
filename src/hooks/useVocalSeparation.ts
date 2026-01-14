@@ -1,9 +1,11 @@
 import { useState, useCallback, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { getCachedTracks, saveCachedTracks, clearOldCache } from '@/lib/audioCache';
 
 interface SeparationResult {
   instrumentalUrl: string;
   vocalsUrl?: string;
+  fromCache?: boolean;
 }
 
 export function useVocalSeparation() {
@@ -15,12 +17,35 @@ export function useVocalSeparation() {
 
   const separateVocals = useCallback(async (audioUrl: string): Promise<SeparationResult | null> => {
     setIsProcessing(true);
-    setProgress('Downloading audio for processing...');
+    setProgress('Checking cache...');
     setError(null);
 
     abortControllerRef.current = new AbortController();
 
     try {
+      // Clear old cache entries on first use
+      await clearOldCache(7);
+
+      // Check IndexedDB cache first
+      const cached = await getCachedTracks(audioUrl);
+      if (cached) {
+        setProgress('Loading from cache...');
+        const instrumentalUrl = URL.createObjectURL(cached.instrumentalBlob);
+        const vocalsUrl = cached.vocalsBlob ? URL.createObjectURL(cached.vocalsBlob) : undefined;
+        
+        const result: SeparationResult = {
+          instrumentalUrl,
+          vocalsUrl,
+          fromCache: true,
+        };
+        
+        setSeparatedAudio(result);
+        setProgress('');
+        return result;
+      }
+
+      setProgress('Downloading audio for processing...');
+
       // Fetch the audio from client side (works with CORS) and convert to base64
       const audioResponse = await fetch(audioUrl);
       if (!audioResponse.ok) {
@@ -53,9 +78,33 @@ export function useVocalSeparation() {
         throw new Error(data?.error || 'Failed to get instrumental track');
       }
 
+      setProgress('Downloading separated tracks for caching...');
+
+      // Download and cache the separated tracks
+      const [instrumentalResponse, vocalsResponse] = await Promise.all([
+        fetch(data.instrumentalUrl),
+        data.vocalsUrl ? fetch(data.vocalsUrl) : Promise.resolve(null),
+      ]);
+
+      if (!instrumentalResponse.ok) {
+        throw new Error('Failed to download instrumental track');
+      }
+
+      const instrumentalBlob = await instrumentalResponse.blob();
+      const vocalsBlob = vocalsResponse?.ok ? await vocalsResponse.blob() : undefined;
+
+      // Save to IndexedDB
+      setProgress('Saving to cache...');
+      await saveCachedTracks(audioUrl, instrumentalBlob, vocalsBlob);
+
+      // Create object URLs from the blobs
+      const instrumentalUrl = URL.createObjectURL(instrumentalBlob);
+      const vocalsUrl = vocalsBlob ? URL.createObjectURL(vocalsBlob) : undefined;
+
       const result: SeparationResult = {
-        instrumentalUrl: data.instrumentalUrl,
-        vocalsUrl: data.vocalsUrl,
+        instrumentalUrl,
+        vocalsUrl,
+        fromCache: false,
       };
 
       setSeparatedAudio(result);
