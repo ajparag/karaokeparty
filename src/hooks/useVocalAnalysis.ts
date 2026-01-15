@@ -482,31 +482,41 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       setMetrics((prev) => ({ ...prev, diction: 0, transcribedText: '' }));
       setTranscriptionError(null);
 
-      // Set audio session to playback mode BEFORE requesting microphone
-      // This prevents Android from switching to "communication" mode which routes volume to call
+      // iOS Safari fix: Reset audio session to 'auto' BEFORE requesting microphone
+      // This ensures iOS doesn't get stuck in a bad audio routing state
       if ('audioSession' in navigator && (navigator as any).audioSession) {
         try {
-          (navigator as any).audioSession.type = 'playback';
-          console.log('[audio] Set audio session type to playback');
+          (navigator as any).audioSession.type = 'auto';
+          console.log('[audio] Reset audio session type to auto before mic request');
         } catch (e) {
-          console.log('[audio] Could not set audio session type:', e);
+          console.log('[audio] Could not reset audio session type:', e);
         }
       }
 
-      // Request microphone with voice processing disabled to avoid triggering communication mode
+      // Request microphone with minimal constraints for iOS compatibility
+      // On iOS Safari 17+, complex constraints can cause silent failures
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
-          // Disable voice processing modes that might trigger call audio routing
-          // @ts-ignore - experimental property
-          voiceIsolation: false,
         },
       });
 
       streamRef.current = stream;
       setHasPermission(true);
+      console.log('[audio] Microphone stream obtained, tracks:', stream.getAudioTracks().length);
+
+      // iOS Safari fix: "Kick" audio session to 'play-and-record' AFTER getting the stream
+      // This forces iOS to properly route audio for simultaneous playback and recording
+      if ('audioSession' in navigator && (navigator as any).audioSession) {
+        try {
+          (navigator as any).audioSession.type = 'play-and-record';
+          console.log('[audio] Set audio session type to play-and-record');
+        } catch (e) {
+          console.log('[audio] Could not set audio session type:', e);
+        }
+      }
 
       // Use webkitAudioContext fallback for older Safari versions
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
