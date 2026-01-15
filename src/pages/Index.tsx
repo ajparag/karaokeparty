@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,6 +15,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Mic, Music, Trophy, Sparkles, Loader2, Play, Search, Edit2, Check } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { useVocalSeparation } from "@/hooks/useVocalSeparation";
 
 interface Track {
   id: string;
@@ -50,6 +51,10 @@ const Index = () => {
   const [hasSearched, setHasSearched] = useState(false);
   const navigate = useNavigate();
   const { toast } = useToast();
+
+  // AI vocal separation (starts in background when track is selected)
+  const { isProcessing: isSeparating, progress: separationProgress, separatedAudio, separateVocals, reset: resetSeparation } = useVocalSeparation();
+  const separationStartedRef = useRef(false);
 
   // Lyrics dialog state
   const [lyricsDialogOpen, setLyricsDialogOpen] = useState(false);
@@ -180,8 +185,28 @@ const Index = () => {
     setLyricsSearchArtist("");
     setLyricsDialogOpen(true);
 
+    // Start AI vocal separation in the background (will be cached in IndexedDB)
+    if (track.audioUrl && !separationStartedRef.current) {
+      separationStartedRef.current = true;
+      console.log('[Index] Starting background AI separation for:', track.title);
+      separateVocals(track.audioUrl).then(() => {
+        console.log('[Index] Background AI separation complete');
+      }).catch((err) => {
+        console.error('[Index] Background AI separation failed:', err);
+      });
+    }
+
     // Auto-fetch lyrics with multiple results (no artist for broader search)
     fetchLyrics(cleanTitle, "");
+  };
+
+  // Reset separation state when dialog closes
+  const handleDialogClose = (open: boolean) => {
+    if (!open) {
+      separationStartedRef.current = false;
+      resetSeparation();
+    }
+    setLyricsDialogOpen(open);
   };
 
   const fetchLyrics = async (title: string, artist: string) => {
@@ -421,7 +446,7 @@ const Index = () => {
       </div>
 
       {/* Lyrics Search Dialog */}
-      <Dialog open={lyricsDialogOpen} onOpenChange={setLyricsDialogOpen}>
+      <Dialog open={lyricsDialogOpen} onOpenChange={handleDialogClose}>
         <DialogContent
           className="sm:max-w-lg bg-card max-h-[80vh] overflow-hidden flex flex-col"
           onOpenAutoFocus={(e) => e.preventDefault()}
@@ -545,6 +570,22 @@ const Index = () => {
               <div className="flex items-center gap-2 p-3 rounded-lg bg-primary/10 text-primary">
                 <Check className="w-4 h-4" />
                 <span className="text-sm font-medium">{fetchedLyrics.length} lines ready</span>
+              </div>
+            )}
+
+            {/* AI Separation progress */}
+            {isSeparating && separationProgress && (
+              <div className="flex items-center gap-2 p-3 rounded-lg bg-muted">
+                <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+                <span className="text-sm text-muted-foreground">{separationProgress}</span>
+              </div>
+            )}
+            {!isSeparating && separatedAudio && (
+              <div className="flex items-center gap-2 p-3 rounded-lg bg-score-perfect/10 text-score-perfect">
+                <Sparkles className="w-4 h-4" />
+                <span className="text-sm font-medium">
+                  AI instrumental ready {separatedAudio.fromCache ? '(cached)' : ''}
+                </span>
               </div>
             )}
           </div>
