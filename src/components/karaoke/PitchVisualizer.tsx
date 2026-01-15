@@ -29,28 +29,37 @@ export function PitchVisualizer({ isActive, onRhythmData, compact = false }: Pit
 
     const initAudio = async () => {
       try {
-        // Set audio session to playback mode for iOS (prevents call audio routing)
+        // iOS Safari fix: Reset audio session to 'auto' BEFORE requesting microphone
         if ('audioSession' in navigator && (navigator as any).audioSession) {
           try {
-            (navigator as any).audioSession.type = 'playback';
-            console.log('[PitchVisualizer] Set audio session type to playback');
+            (navigator as any).audioSession.type = 'auto';
+            console.log('[PitchVisualizer] Reset audio session type to auto');
           } catch (e) {
-            console.log('[PitchVisualizer] Could not set audio session type:', e);
+            console.log('[PitchVisualizer] Could not reset audio session type:', e);
           }
         }
 
-        // Request microphone with Apple-friendly constraints
+        // Request microphone with minimal constraints for iOS compatibility
         const stream = await navigator.mediaDevices.getUserMedia({ 
           audio: {
             echoCancellation: true,
             noiseSuppression: true,
             autoGainControl: true,
-            // @ts-ignore - experimental property for Safari
-            voiceIsolation: false,
           } 
         });
         setHasPermission(true);
         setError(null);
+        console.log('[PitchVisualizer] Microphone stream obtained');
+
+        // iOS Safari fix: "Kick" audio session to 'play-and-record' AFTER getting the stream
+        if ('audioSession' in navigator && (navigator as any).audioSession) {
+          try {
+            (navigator as any).audioSession.type = 'play-and-record';
+            console.log('[PitchVisualizer] Set audio session type to play-and-record');
+          } catch (e) {
+            console.log('[PitchVisualizer] Could not set audio session type:', e);
+          }
+        }
 
         // Use webkitAudioContext fallback for older Safari versions
         const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
