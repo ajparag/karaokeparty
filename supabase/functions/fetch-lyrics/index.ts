@@ -105,8 +105,17 @@ async function searchLRCLIBMultiple(title: string, artist: string): Promise<Lyri
       return [];
     }
     
-    // Take top 3 results and parse their lyrics
-    const top3 = results.slice(0, 3).map((result: any) => {
+    // Sort results to prioritize synced lyrics first
+    const sortedResults = [...results].sort((a: any, b: any) => {
+      const aHasSynced = !!a.syncedLyrics;
+      const bHasSynced = !!b.syncedLyrics;
+      if (aHasSynced && !bHasSynced) return -1;
+      if (!aHasSynced && bHasSynced) return 1;
+      return 0;
+    });
+    
+    // Take top 3 results after sorting and parse their lyrics
+    const top3 = sortedResults.slice(0, 3).map((result: any) => {
       let lyrics: LyricLine[] = [];
       let synced = false;
       
