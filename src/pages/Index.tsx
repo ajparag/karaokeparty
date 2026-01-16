@@ -168,6 +168,10 @@ const Index = () => {
 
   // Open lyrics dialog when user selects a track
   const handleSelectTrack = (track: Track) => {
+    // Reset separation state for new track selection
+    resetSeparation();
+    separationStartedRef.current = false;
+    
     setSelectedTrack(track);
     setFetchedLyrics([]);
     setLyricsSearchResults([]);
@@ -186,11 +190,13 @@ const Index = () => {
     setLyricsDialogOpen(true);
 
     // Start AI vocal separation in the background (will be cached in IndexedDB)
-    if (track.audioUrl && !separationStartedRef.current) {
+    if (track.audioUrl) {
       separationStartedRef.current = true;
       console.log('[Index] Starting background AI separation for:', track.title);
-      separateVocals(track.audioUrl).then(() => {
-        console.log('[Index] Background AI separation complete');
+      separateVocals(track.audioUrl).then((result) => {
+        if (result) {
+          console.log('[Index] Background AI separation complete:', result.fromCache ? 'from cache' : 'newly processed');
+        }
       }).catch((err) => {
         console.error('[Index] Background AI separation failed:', err);
       });
