@@ -27,6 +27,19 @@ function formatDuration(seconds: number): string {
   return `${mins}:${secs.toString().padStart(2, '0')}`;
 }
 
+// Decode HTML entities like &quot; &amp; etc.
+function decodeHtmlEntities(text: string): string {
+  if (!text) return text;
+  return text
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code, 10)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, code) => String.fromCharCode(parseInt(code, 16)));
+}
+
 // JioSaavn API search
 async function searchSaavn(query: string): Promise<Track[]> {
   try {
@@ -81,13 +94,13 @@ async function searchSaavn(query: string): Promise<Track[]> {
 
       return {
         id: song.id,
-        title: song.name || 'Unknown',
-        artist: artists,
+        title: decodeHtmlEntities(song.name || 'Unknown'),
+        artist: decodeHtmlEntities(artists),
         thumbnail: thumbnail,
         duration: formatDuration(song.duration || 0),
         source: 'saavn' as const,
         audioUrl: audioUrl,
-        album: song.album?.name || '',
+        album: decodeHtmlEntities(song.album?.name || ''),
         playCount: playCount,
       };
     });
