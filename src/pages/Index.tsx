@@ -384,16 +384,16 @@ const Index = () => {
                     >
                       <div className="flex items-center gap-3">
                         {/* Thumbnail */}
-                        <div className="relative w-12 h-12 rounded-lg overflow-hidden bg-muted shrink-0">
+                        <div className="relative w-20 h-20 md:w-24 md:h-24 rounded-lg overflow-hidden bg-muted shrink-0">
                           {track.thumbnail ? (
                             <img src={track.thumbnail} alt={track.title} className="w-full h-full object-cover" />
                           ) : (
                             <div className="w-full h-full flex items-center justify-center">
-                              <Music className="w-5 h-5 text-muted-foreground" />
+                              <Music className="w-8 h-8 text-muted-foreground" />
                             </div>
                           )}
                           <div className="absolute inset-0 bg-background/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                            <Play className="w-5 h-5 text-primary fill-primary" />
+                            <Play className="w-8 h-8 text-primary fill-primary" />
                           </div>
                         </div>
 
