@@ -19,7 +19,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { ArrowLeft, Play, Pause, Mic, MicOff, RotateCcw, Save, Volume2, VolumeX, Edit2, Search, RefreshCw, Music, Check, Music2, Loader2, Sparkles } from "lucide-react";
+import { ArrowLeft, Play, Pause, Mic, MicOff, RotateCcw, Save, Volume2, VolumeX, Edit2, Search, Music, Check, Music2, Loader2 } from "lucide-react";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -108,14 +108,12 @@ const Sing = () => {
     retryTranscription,
   } = useVocalAnalysis();
 
-  // AI-based vocal separation (Demucs via HuggingFace)
+  // AI-based vocal separation - loads from IndexedDB cache (separation happens on Index page)
   const {
-    isProcessing: isSeparating,
-    progress: separationProgress,
-    error: separationError,
+    isProcessing: isLoadingFromCache,
+    progress: cacheProgress,
     separatedAudio,
-    separateVocals,
-    reset: resetSeparation,
+    separateVocals: loadFromCache,
   } = useVocalSeparation();
 
   // Vocals ON/OFF toggle (plays vocals at 50% volume when ON)
@@ -151,16 +149,16 @@ const Sing = () => {
     }
   }, [trackId, navigate, toast]);
 
-  // Auto-start AI separation when track loads
+  // Load separated audio from IndexedDB cache (separation already happened on Index page)
   useEffect(() => {
-    if (track?.audioUrl && !separatedAudio && !isSeparating && !separationError) {
-      separateVocals(track.audioUrl).then((result) => {
+    if (track?.audioUrl && !separatedAudio && !isLoadingFromCache) {
+      loadFromCache(track.audioUrl).then((result) => {
         if (result) {
-          console.log('[ai-separation] Auto-started and completed successfully');
+          console.log('[sing] Loaded separated audio from cache:', result.fromCache ? 'cached' : 'processed');
         }
       });
     }
-  }, [track?.audioUrl, separatedAudio, isSeparating, separationError, separateVocals]);
+  }, [track?.audioUrl, separatedAudio, isLoadingFromCache, loadFromCache]);
 
   // Initialize HTML5 Audio Player - Demucs instrumental or fallback to original
   useEffect(() => {
@@ -268,7 +266,7 @@ const Sing = () => {
       audioRef.current = null;
       stopAnalysis();
     };
-  }, [track?.audioUrl, toast, stopAnalysis, separatedAudio?.instrumentalUrl]);
+  }, [track?.audioUrl, toast, stopAnalysis, separatedAudio?.instrumentalUrl, isLoadingFromCache]);
 
   // Setup vocals audio when separated audio is available
   useEffect(() => {
@@ -617,15 +615,6 @@ const Sing = () => {
 
   const rating = getRating(totalScore);
 
-  // Handle starting AI separation
-  const handleStartSeparation = async () => {
-    if (track?.audioUrl) {
-      const result = await separateVocals(track.audioUrl);
-      if (result) {
-        toast({ title: "AI separation complete", description: "Now playing instrumental track with optional vocals" });
-      }
-    }
-  };
 
   return (
     <div className="h-[100dvh] bg-background flex flex-col overflow-hidden">
@@ -755,43 +744,6 @@ const Sing = () => {
             </DialogFooter>
           </DialogContent>
         </Dialog>
-        
-        {/* AI Vocal Separation Button - only show if not yet separated */}
-        {!separatedAudio && !isSeparating && (
-          <Button 
-            variant="outline" 
-            size="sm"
-            onClick={handleStartSeparation}
-            className="shrink-0 gap-1.5"
-            title="Use AI to separate vocals (Demucs)"
-          >
-            <Sparkles className="w-4 h-4" />
-            <span className="hidden sm:inline">AI Separate</span>
-          </Button>
-        )}
-        
-        {isSeparating && (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="w-4 h-4 animate-spin" />
-            <span className="hidden sm:inline">{separationProgress || 'Processing...'}</span>
-          </div>
-        )}
-        
-        {separationError && !isSeparating && (
-          <div className="flex items-center gap-2 text-sm text-destructive">
-            <span className="hidden sm:inline truncate max-w-[150px]" title={separationError}>
-              AI failed
-            </span>
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              onClick={resetSeparation}
-              className="h-6 px-2 text-xs"
-            >
-              Retry
-            </Button>
-          </div>
-        )}
 
         {/* Vocals ON/OFF Toggle - only show when separation is complete */}
         {separatedAudio && (
@@ -824,21 +776,21 @@ const Sing = () => {
         </div>
       </header>
 
-      {/* AI Separation Processing Dialog */}
-      <AlertDialog open={isSeparating || (!separatedAudio && isLoadingAudio && !!track)}>
+      {/* Loading Dialog - shows while loading from cache */}
+      <AlertDialog open={isLoadingFromCache || (!separatedAudio && isLoadingAudio && !!track)}>
         <AlertDialogContent className="max-w-sm">
           <AlertDialogHeader className="text-center">
             <div className="flex justify-center mb-4">
               <div className="relative">
                 <Loader2 className="w-12 h-12 animate-spin text-primary" />
-                <Sparkles className="w-5 h-5 text-primary absolute -top-1 -right-1 animate-pulse" />
+                <Music className="w-5 h-5 text-primary absolute -top-1 -right-1 animate-pulse" />
               </div>
             </div>
             <AlertDialogTitle className="text-xl 2xl:text-2xl 3xl:text-3xl">
-              We are getting your song ready...
+              Loading your song...
             </AlertDialogTitle>
             <AlertDialogDescription className="text-base 2xl:text-lg 3xl:text-xl">
-              {separationProgress || "AI is separating vocals from the track for the best karaoke experience."}
+              {cacheProgress || "Preparing the instrumental track for the best karaoke experience."}
             </AlertDialogDescription>
           </AlertDialogHeader>
         </AlertDialogContent>
@@ -1042,11 +994,11 @@ const Sing = () => {
             <Button
               size="lg"
               onClick={togglePlay}
-              disabled={!isPlayerReady || isSeparating || !separatedAudio}
+              disabled={!isPlayerReady || isLoadingFromCache || !separatedAudio}
               className="gradient-primary text-primary-foreground w-12 h-12 md:w-16 md:h-16 rounded-full disabled:opacity-50"
               title={!separatedAudio ? 'Waiting for AI separation...' : isPlaying ? 'Pause' : 'Play'}
             >
-              {isSeparating ? <Loader2 className="w-6 h-6 md:w-8 md:h-8 animate-spin" /> : isPlaying ? <Pause className="w-6 h-6 md:w-8 md:h-8" /> : <Play className="w-6 h-6 md:w-8 md:h-8 ml-0.5" />}
+              {isLoadingFromCache ? <Loader2 className="w-6 h-6 md:w-8 md:h-8 animate-spin" /> : isPlaying ? <Pause className="w-6 h-6 md:w-8 md:h-8" /> : <Play className="w-6 h-6 md:w-8 md:h-8 ml-0.5" />}
             </Button>
 
             <Button variant="outline" size="icon" onClick={handleRestart} className="w-9 h-9 md:w-10 md:h-10">
