@@ -332,45 +332,64 @@ const Sing = () => {
   }, [volume, isMuted, vocalsEnabled]);
 
   // Accumulate score from live metrics while audio is playing.
-  // NOTE: This lives outside the mic hook so it always sees the latest `isPlaying` state.
+  // Uses interval-based sampling for reliable updates at ~5Hz.
+  const metricsRef = useRef(metrics);
+  metricsRef.current = metrics;
+
   useEffect(() => {
-    if (!isPlaying) return;
+    if (!isPlaying || !isMicActive) return;
 
-    // Sample at ~5Hz to keep updates smooth but not overly chatty.
-    const now = performance.now();
-    if (now - lastScoreSampleAtRef.current < 200) return;
-    lastScoreSampleAtRef.current = now;
-
-    if (metrics.isVoiceDetected || metrics.diction > 0) {
-      scoreAccumulatorRef.current.pitch += metrics.pitchAccuracy;
-      scoreAccumulatorRef.current.rhythm += metrics.rhythm;
-      scoreAccumulatorRef.current.diction += metrics.diction;
-      scoreAccumulatorRef.current.technique += metrics.technique;
-      scoreAccumulatorRef.current.deductions += metrics.deductions;
-      scoreAccumulatorRef.current.count += 1;
-    }
-
-    if (scoreAccumulatorRef.current.count > 0) {
-      const avgPitch = scoreAccumulatorRef.current.pitch / scoreAccumulatorRef.current.count;
-      const avgRhythm = scoreAccumulatorRef.current.rhythm / scoreAccumulatorRef.current.count;
-      const avgDiction = scoreAccumulatorRef.current.diction / scoreAccumulatorRef.current.count;
-      const avgTechnique = scoreAccumulatorRef.current.technique / scoreAccumulatorRef.current.count;
-      const avgDeductions = scoreAccumulatorRef.current.deductions / scoreAccumulatorRef.current.count;
-
-      // Formula: Score = (Wp · P) + (Wr · R) + (Wt · T) + (Wd · D) - E
-      const combined =
-        avgPitch * SCORE_WEIGHTS.pitch +
-        avgDiction * SCORE_WEIGHTS.diction +
-        avgTechnique * SCORE_WEIGHTS.technique +
-        avgRhythm * SCORE_WEIGHTS.rhythm;
+    const sampleScore = () => {
+      const currentMetrics = metricsRef.current;
       
-      // Apply deductions (E in the formula) - reduced to max 10% of score
-      const deductionPenalty = (avgDeductions / 100) * 0.1 * combined;
-      const finalScore = Math.max(0, combined - deductionPenalty);
+      if (currentMetrics.isVoiceDetected || currentMetrics.diction > 0) {
+        scoreAccumulatorRef.current.pitch += currentMetrics.pitchAccuracy;
+        scoreAccumulatorRef.current.rhythm += currentMetrics.rhythm;
+        scoreAccumulatorRef.current.diction += currentMetrics.diction;
+        scoreAccumulatorRef.current.technique += currentMetrics.technique;
+        scoreAccumulatorRef.current.deductions += currentMetrics.deductions;
+        scoreAccumulatorRef.current.count += 1;
+        
+        console.log('[score] Sampled:', {
+          pitch: currentMetrics.pitchAccuracy,
+          rhythm: currentMetrics.rhythm,
+          diction: currentMetrics.diction,
+          technique: currentMetrics.technique,
+          voice: currentMetrics.isVoiceDetected,
+          count: scoreAccumulatorRef.current.count
+        });
+      }
 
-      setTotalScore(Math.round(finalScore * 10));
-    }
-  }, [isPlaying, metrics, SCORE_WEIGHTS]);
+      if (scoreAccumulatorRef.current.count > 0) {
+        const avgPitch = scoreAccumulatorRef.current.pitch / scoreAccumulatorRef.current.count;
+        const avgRhythm = scoreAccumulatorRef.current.rhythm / scoreAccumulatorRef.current.count;
+        const avgDiction = scoreAccumulatorRef.current.diction / scoreAccumulatorRef.current.count;
+        const avgTechnique = scoreAccumulatorRef.current.technique / scoreAccumulatorRef.current.count;
+        const avgDeductions = scoreAccumulatorRef.current.deductions / scoreAccumulatorRef.current.count;
+
+        // Formula: Score = (Wp · P) + (Wr · R) + (Wt · T) + (Wd · D) - E
+        const combined =
+          avgPitch * SCORE_WEIGHTS.pitch +
+          avgDiction * SCORE_WEIGHTS.diction +
+          avgTechnique * SCORE_WEIGHTS.technique +
+          avgRhythm * SCORE_WEIGHTS.rhythm;
+        
+        // Apply deductions (E in the formula) - reduced to max 10% of score
+        const deductionPenalty = (avgDeductions / 100) * 0.1 * combined;
+        const finalScore = Math.max(0, combined - deductionPenalty);
+
+        setTotalScore(Math.round(finalScore * 10));
+      }
+    };
+
+    // Sample at 5Hz (every 200ms) using interval
+    const intervalId = setInterval(sampleScore, 200);
+    
+    // Also sample immediately
+    sampleScore();
+
+    return () => clearInterval(intervalId);
+  }, [isPlaying, isMicActive, SCORE_WEIGHTS]);
 
   const fetchLyrics = async (title: string, artist: string) => {
     try {
