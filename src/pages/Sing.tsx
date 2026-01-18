@@ -364,8 +364,8 @@ const Sing = () => {
         avgTechnique * SCORE_WEIGHTS.technique +
         avgRhythm * SCORE_WEIGHTS.rhythm;
       
-      // Apply deductions (E in the formula) - scale to max 20% of score
-      const deductionPenalty = (avgDeductions / 100) * 0.2 * combined;
+      // Apply deductions (E in the formula) - reduced to max 10% of score
+      const deductionPenalty = (avgDeductions / 100) * 0.1 * combined;
       const finalScore = Math.max(0, combined - deductionPenalty);
 
       setTotalScore(Math.round(finalScore * 10));
