@@ -121,12 +121,18 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
 
     lastTranscribedTextRef.current = text;
 
+    // HIGH ACHIEVABILITY DICTION SCORING
+    // Any detected words should score well, perfect match not required
     let dictionScore = 0;
     if (options.expectedLyrics) {
-      dictionScore = calculateSimilarity(text, options.expectedLyrics);
+      const similarity = calculateSimilarity(text, options.expectedLyrics);
+      // Boost similarity scores - 50% match = 75 points, 80% match = 95 points
+      dictionScore = Math.min(100, 50 + similarity * 0.5);
     } else {
+      // Without lyrics, score based on word detection
       const wordCount = text.split(/\s+/).filter(Boolean).length;
-      dictionScore = Math.min(85, 40 + wordCount * 8);
+      // Each word = +12 points, base of 55, cap at 95
+      dictionScore = Math.min(95, 55 + wordCount * 12);
     }
 
     if (isFinal) {
@@ -306,16 +312,18 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     
     if (isVoiceDetected) {
       lastVoiceActivityRef.current = now;
+      // Boost intermediate diction when voice is detected
       if (intermediateDictionRef.current < lastDictionScoreRef.current) {
         intermediateDictionRef.current = lastDictionScoreRef.current;
-      } else if (intermediateDictionRef.current < 70) {
-        intermediateDictionRef.current = Math.min(70, intermediateDictionRef.current + 0.5);
+      } else if (intermediateDictionRef.current < 80) {
+        // Faster ramp up to reward singing
+        intermediateDictionRef.current = Math.min(80, intermediateDictionRef.current + 1.0);
       }
       
-      // Deduction: Singing during instrumental sections (reduced penalty)
+      // Minimal deduction for singing during instrumental (barely penalize)
       if (options.isInstrumentalSection) {
         instrumentalVoiceCountRef.current += 1;
-        deductionScoreRef.current = Math.min(100, deductionScoreRef.current + 0.25); // Reduced from 0.5
+        deductionScoreRef.current = Math.min(30, deductionScoreRef.current + 0.1);
       }
     } else {
       if (now - lastVoiceActivityRef.current > 500) {
@@ -344,29 +352,41 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       }
     }
 
-    // Calculate pitch accuracy - only when voice is detected
-    // LENIENT SCORING: Reduced multiplier (100 instead of 200) and added 30-point floor
-    let pitchAccuracy = 0;
-    if (isVoiceDetected && pitchHistoryRef.current.length > 5) {
-      const recentPitches = pitchHistoryRef.current.slice(-10);
+    // Calculate pitch accuracy - HIGH ACHIEVABILITY SCORING
+    // A consistent singer should be able to reach 95-100 with stable pitch
+    let pitchAccuracy = 50; // Base score for any voice detected
+    if (isVoiceDetected && pitchHistoryRef.current.length > 3) {
+      const recentPitches = pitchHistoryRef.current.slice(-15);
       const avgPitch = recentPitches.reduce((a, b) => a + b, 0) / recentPitches.length;
       const variance = recentPitches.reduce((sum, p) => sum + Math.pow(p - avgPitch, 2), 0) / recentPitches.length;
       const stdDev = Math.sqrt(variance);
-      const normalizedVariance = Math.min(stdDev / avgPitch, 0.6); // Increased cap from 0.5 to 0.6
-      // Lenient: 100x multiplier instead of 200x, with 30-point floor
-      pitchAccuracy = Math.max(30, 100 - (normalizedVariance * 100));
+      // Coefficient of variation - lower is better (more consistent pitch)
+      const cv = stdDev / avgPitch;
       
-      // Deduction: Extreme off-key detection (>40% variance = off-key noise, was 25%)
-      if (normalizedVariance > 0.40) {
-        offKeyCountRef.current += 1;
-        deductionScoreRef.current = Math.min(100, deductionScoreRef.current + 0.2); // Reduced from 0.3
+      // Scoring curve: CV of 0 = 100pts, CV of 0.15 = 70pts, CV of 0.3+ = 50pts
+      // Most singers have CV between 0.05-0.15, so this is very achievable
+      if (cv < 0.05) {
+        pitchAccuracy = 95 + (1 - cv / 0.05) * 5; // 95-100 for excellent
+      } else if (cv < 0.15) {
+        pitchAccuracy = 70 + (1 - (cv - 0.05) / 0.10) * 25; // 70-95 for good
+      } else if (cv < 0.30) {
+        pitchAccuracy = 50 + (1 - (cv - 0.15) / 0.15) * 20; // 50-70 for average
       }
+      // else stays at base 50
+      
+      // Only penalize truly awful off-key singing (>50% variance)
+      if (cv > 0.50) {
+        offKeyCountRef.current += 1;
+        deductionScoreRef.current = Math.min(50, deductionScoreRef.current + 0.1);
+      }
+    } else if (isVoiceDetected) {
+      pitchAccuracy = 65; // Give decent score while building history
     }
 
-    // Calculate rhythm consistency - only when voice is detected
-    // LENIENT SCORING: Reduced multiplier (80 instead of 200) and added 35-point floor
-    let rhythm = 0;
-    if (isVoiceDetected && beatTimesRef.current.length > 3) {
+    // Calculate rhythm consistency - HIGH ACHIEVABILITY SCORING
+    // Any reasonably consistent beat pattern should score well
+    let rhythm = 50; // Base score for voice detected
+    if (isVoiceDetected && beatTimesRef.current.length > 2) {
       const intervals: number[] = [];
       for (let i = 1; i < beatTimesRef.current.length; i++) {
         intervals.push(beatTimesRef.current[i] - beatTimesRef.current[i - 1]);
@@ -374,74 +394,64 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
       const intervalVariance = intervals.reduce((sum, int) => sum + Math.pow(int - avgInterval, 2), 0) / intervals.length;
       const intervalStdDev = Math.sqrt(intervalVariance);
-      const normalizedIntervalVariance = Math.min(intervalStdDev / avgInterval, 0.6); // Increased cap
-      // Lenient: 80x multiplier instead of 200x, with 35-point floor
-      rhythm = Math.max(35, 100 - (normalizedIntervalVariance * 80));
+      const cv = intervalStdDev / avgInterval;
+      
+      // Scoring curve: CV of 0 = 100pts, CV of 0.2 = 75pts, CV of 0.5+ = 50pts
+      if (cv < 0.10) {
+        rhythm = 90 + (1 - cv / 0.10) * 10; // 90-100 for excellent
+      } else if (cv < 0.25) {
+        rhythm = 70 + (1 - (cv - 0.10) / 0.15) * 20; // 70-90 for good
+      } else if (cv < 0.50) {
+        rhythm = 50 + (1 - (cv - 0.25) / 0.25) * 20; // 50-70 for average
+      }
+    } else if (isVoiceDetected) {
+      rhythm = 65; // Give decent score while building history
     }
 
-    // Calculate technique score (vibrato + glissando detection) - only when voice is detected
-    // LENIENT SCORING: Wider detection ranges and bonus points for any vocal effort
-    let technique = 0;
-    if (isVoiceDetected && vibratoHistoryRef.current.length >= 8) { // Reduced from 10
+    // Calculate technique score - HIGH ACHIEVABILITY SCORING
+    // Based on vocal consistency and presence, not complex detection
+    let technique = 55; // Base score for singing
+    if (isVoiceDetected) {
       const pitches = vibratoHistoryRef.current.slice(-20);
       
-      // Base technique score for singing with detected voice (rewards effort)
-      let baseScore = 25;
-      
-      // Vibrato detection: Look for oscillations (widened range)
-      let vibratoScore = 0;
-      if (pitches.length >= 8) { // Reduced from 10
-        const oscillations = [];
-        for (let i = 1; i < pitches.length; i++) {
-          oscillations.push(pitches[i] - pitches[i - 1]);
-        }
-        
-        // Count sign changes (oscillations)
-        let signChanges = 0;
-        for (let i = 1; i < oscillations.length; i++) {
-          if ((oscillations[i] > 0 && oscillations[i - 1] < 0) || 
-              (oscillations[i] < 0 && oscillations[i - 1] > 0)) {
-            signChanges++;
-          }
-        }
-        
-        // Widened vibrato detection: 1-12 sign changes (was 2-8)
-        if (signChanges >= 1 && signChanges <= 12) {
-          const maxPitch = Math.max(...pitches);
-          const minPitch = Math.min(...pitches);
-          const avgPitch = pitches.reduce((a, b) => a + b, 0) / pitches.length;
-          const oscillationDepth = (maxPitch - minPitch) / avgPitch;
-          
-          // Widened vibrato range: 1-20% pitch variation (was 2-15%)
-          if (oscillationDepth >= 0.01 && oscillationDepth <= 0.20) {
-            vibratoScore = Math.min(100, 50 + oscillationDepth * 300);
-          }
-        }
+      // Volume consistency bonus (steady voice control)
+      const volumes = volumeHistoryRef.current.slice(-15);
+      let volumeBonus = 0;
+      if (volumes.length > 5) {
+        const avgVol = volumes.reduce((a, b) => a + b, 0) / volumes.length;
+        const volVariance = volumes.reduce((sum, v) => sum + Math.pow(v - avgVol, 2), 0) / volumes.length;
+        const volCv = Math.sqrt(volVariance) / (avgVol + 0.001);
+        // Good volume control = low variance
+        if (volCv < 0.3) volumeBonus = 15;
+        else if (volCv < 0.5) volumeBonus = 10;
+        else volumeBonus = 5;
       }
       
-      // Glissando/slide detection: Smooth pitch transitions (more lenient)
-      let glissandoScore = 0;
-      if (pitches.length >= 4) { // Reduced from 5
-        const smoothness = [];
-        for (let i = 2; i < pitches.length; i++) {
-          const acceleration = Math.abs((pitches[i] - pitches[i-1]) - (pitches[i-1] - pitches[i-2]));
-          smoothness.push(acceleration);
-        }
-        const avgSmoothness = smoothness.reduce((a, b) => a + b, 0) / smoothness.length;
+      // Pitch movement bonus (natural singing has pitch variation)
+      let expressionBonus = 0;
+      if (pitches.length >= 5) {
         const avgPitch = pitches.reduce((a, b) => a + b, 0) / pitches.length;
-        const normalizedSmoothness = avgSmoothness / avgPitch;
+        const maxPitch = Math.max(...pitches);
+        const minPitch = Math.min(...pitches);
+        const range = (maxPitch - minPitch) / avgPitch;
         
-        // More lenient glissando threshold: < 0.05 (was 0.03)
-        if (normalizedSmoothness < 0.05) {
-          glissandoScore = Math.max(0, 70 - normalizedSmoothness * 1000); // Reduced penalty
+        // Natural singing has 5-25% pitch range - reward this
+        if (range >= 0.03 && range <= 0.30) {
+          expressionBonus = 20;
+        } else if (range < 0.03) {
+          expressionBonus = 10; // Monotone but still singing
+        } else {
+          expressionBonus = 5; // Wild pitch but trying
         }
       }
       
-      // Combine: base score + best of vibrato/glissando
-      technique = Math.min(100, baseScore + Math.max(vibratoScore, glissandoScore) * 0.75);
+      // Sustained singing bonus
+      const sustainBonus = pitches.length >= 15 ? 10 : pitches.length >= 8 ? 5 : 0;
       
-      // Apply smoothing to technique score
-      lastTechniqueScoreRef.current = lastTechniqueScoreRef.current * 0.7 + technique * 0.3; // Faster response
+      technique = Math.min(100, technique + volumeBonus + expressionBonus + sustainBonus);
+      
+      // Smooth the technique score
+      lastTechniqueScoreRef.current = lastTechniqueScoreRef.current * 0.6 + technique * 0.4;
       technique = Math.round(lastTechniqueScoreRef.current);
     }
 
@@ -450,11 +460,11 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       Math.round(intermediateDictionRef.current)
     );
 
-    // Calculate final deduction (capped at 100, decays slowly)
-    const deductions = Math.round(Math.min(100, deductionScoreRef.current));
-    // Slowly decay deductions over time when not adding new ones
+    // Calculate final deduction (capped at 30 to prevent score crushing)
+    const deductions = Math.round(Math.min(30, deductionScoreRef.current));
+    // Faster decay of deductions to be forgiving
     if (deductionScoreRef.current > 0) {
-      deductionScoreRef.current = Math.max(0, deductionScoreRef.current - 0.1);
+      deductionScoreRef.current = Math.max(0, deductionScoreRef.current - 0.2);
     }
 
     return {
