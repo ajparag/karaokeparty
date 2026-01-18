@@ -23,8 +23,8 @@ export function useVocalSeparation() {
     abortControllerRef.current = new AbortController();
 
     try {
-      // Clear old cache entries on first use
-      await clearOldCache(7);
+      // Clear old cache entries in background (non-blocking)
+      clearOldCache(7).catch(console.error);
 
       // Check IndexedDB cache first
       const cached = await getCachedTracks(audioUrl);
@@ -41,10 +41,11 @@ export function useVocalSeparation() {
         
         setSeparatedAudio(result);
         setProgress('');
+        setIsProcessing(false);
         return result;
       }
 
-      setProgress('Downloading audio for processing...');
+      setProgress('Downloading audio...');
 
       // Fetch the audio from client side (works with CORS) and convert to base64
       const audioResponse = await fetch(audioUrl);
@@ -53,7 +54,7 @@ export function useVocalSeparation() {
       }
       
       const audioBlob = await audioResponse.blob();
-      setProgress(`Converting audio (${Math.round(audioBlob.size / 1024)}KB)...`);
+      setProgress(`Processing audio (${Math.round(audioBlob.size / 1024)}KB)...`);
       
       // Convert blob to base64
       const arrayBuffer = await audioBlob.arrayBuffer();
@@ -64,7 +65,7 @@ export function useVocalSeparation() {
       }
       const audioBase64 = btoa(binary);
       
-      setProgress('Sending to AI for vocal separation (this may take 1-2 minutes)...');
+      setProgress('AI vocal separation (1-2 min)...');
       
       const { data, error: fnError } = await supabase.functions.invoke('separate-vocals', {
         body: { audioBase64 },
@@ -78,9 +79,9 @@ export function useVocalSeparation() {
         throw new Error(data?.error || 'Failed to get instrumental track');
       }
 
-      setProgress('Downloading separated tracks for caching...');
+      setProgress('Downloading tracks...');
 
-      // Download and cache the separated tracks
+      // Download instrumental and vocals in parallel for faster availability
       const [instrumentalResponse, vocalsResponse] = await Promise.all([
         fetch(data.instrumentalUrl),
         data.vocalsUrl ? fetch(data.vocalsUrl) : Promise.resolve(null),
@@ -90,14 +91,13 @@ export function useVocalSeparation() {
         throw new Error('Failed to download instrumental track');
       }
 
-      const instrumentalBlob = await instrumentalResponse.blob();
-      const vocalsBlob = vocalsResponse?.ok ? await vocalsResponse.blob() : undefined;
+      // Get blobs in parallel
+      const [instrumentalBlob, vocalsBlob] = await Promise.all([
+        instrumentalResponse.blob(),
+        vocalsResponse?.ok ? vocalsResponse.blob() : Promise.resolve(undefined),
+      ]);
 
-      // Save to IndexedDB
-      setProgress('Saving to cache...');
-      await saveCachedTracks(audioUrl, instrumentalBlob, vocalsBlob);
-
-      // Create object URLs from the blobs
+      // Create object URLs immediately for playback
       const instrumentalUrl = URL.createObjectURL(instrumentalBlob);
       const vocalsUrl = vocalsBlob ? URL.createObjectURL(vocalsBlob) : undefined;
 
@@ -107,17 +107,25 @@ export function useVocalSeparation() {
         fromCache: false,
       };
 
+      // Set result immediately so playback can start
       setSeparatedAudio(result);
       setProgress('');
+      setIsProcessing(false);
+
+      // Save to IndexedDB in background (non-blocking) - don't wait for this
+      saveCachedTracks(audioUrl, instrumentalBlob, vocalsBlob)
+        .then(() => console.log('[VocalSeparation] Cached tracks saved'))
+        .catch((err) => console.error('[VocalSeparation] Failed to cache tracks:', err));
+
       return result;
 
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
       setError(message);
       setProgress('');
+      setIsProcessing(false);
       return null;
     } finally {
-      setIsProcessing(false);
       abortControllerRef.current = null;
     }
   }, []);
