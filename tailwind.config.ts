@@ -18,8 +18,10 @@ export default {
       'lg': '1024px',
       'xl': '1280px',
       '2xl': '1536px',
-      '3xl': '1920px',  // Smart TV / Large displays
-      '4xl': '2560px',  // 4K displays
+      '3xl': '1920px',  // Full HD / Smart TV
+      '4xl': '2560px',  // QHD / Ultrawide
+      '5xl': '3440px',  // Ultrawide 21:9
+      '6xl': '3840px',  // 4K displays
     },
     extend: {
       fontFamily: {

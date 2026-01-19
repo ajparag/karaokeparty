@@ -76,10 +76,30 @@
     font-weight: 600;
   }
 
-  /* Big screen / Smart TV optimizations (screens >= 1920px wide) */
+  /* Full HD screens (1920px+) */
   @media (min-width: 1920px) {
     html {
-      font-size: 20px; /* Base size increase for better TV visibility */
+      font-size: 18px;
+    }
+    
+    body {
+      font-size: 1.15rem;
+    }
+    
+    h1 { font-size: 3rem; }
+    h2 { font-size: 2.5rem; }
+    h3 { font-size: 1.75rem; }
+    h4 { font-size: 1.35rem; }
+    
+    p, span, button, input, label {
+      font-size: 1.15rem;
+    }
+  }
+
+  /* QHD / Ultrawide screens (2560px+) */
+  @media (min-width: 2560px) {
+    html {
+      font-size: 20px;
     }
     
     body {
@@ -96,19 +116,39 @@
     }
   }
 
-  /* Extra large screens (4K TVs, >= 2560px) */
-  @media (min-width: 2560px) {
+  /* Ultrawide 21:9 screens (3440px+) */
+  @media (min-width: 3440px) {
     html {
-      font-size: 24px;
+      font-size: 22px;
+    }
+    
+    body {
+      font-size: 1.35rem;
+    }
+    
+    h1 { font-size: 4rem; }
+    h2 { font-size: 3rem; }
+    h3 { font-size: 2.25rem; }
+    h4 { font-size: 1.75rem; }
+    
+    p, span, button, input, label {
+      font-size: 1.35rem;
+    }
+  }
+
+  /* 4K displays (3840px+) */
+  @media (min-width: 3840px) {
+    html {
+      font-size: 26px;
     }
     
     body {
       font-size: 1.5rem;
     }
     
-    h1 { font-size: 4.5rem; }
-    h2 { font-size: 3.5rem; }
-    h3 { font-size: 2.5rem; }
+    h1 { font-size: 5rem; }
+    h2 { font-size: 4rem; }
+    h3 { font-size: 2.75rem; }
     h4 { font-size: 2rem; }
     
     p, span, button, input, label {
