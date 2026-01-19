@@ -105,10 +105,8 @@ async function searchSaavn(query: string): Promise<Track[]> {
       };
     });
 
-    // Sort by play count (most played first)
-    tracks.sort((a, b) => (b.playCount || 0) - (a.playCount || 0));
-
-    console.log(`Found ${tracks.length} tracks from Saavn (sorted by playCount)`);
+    // Keep original order from API (sorted by relevance)
+    console.log(`Found ${tracks.length} tracks from Saavn (sorted by relevance)`);
     return tracks;
   } catch (error) {
     console.error('Saavn search error:', error);
