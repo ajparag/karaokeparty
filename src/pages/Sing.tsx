@@ -929,33 +929,41 @@ const Sing = () => {
                     ? 1
                     : 0;
 
+                // Split text into grapheme clusters (properly handles multi-byte chars like Hindi/Marathi)
+                const chars = [...line.text];
+                const highlightedCharCount = isCurrent 
+                  ? Math.floor(lineProgress * chars.length) 
+                  : isPast 
+                    ? chars.length 
+                    : 0;
+
                 return (
                   <div
                     key={actualIndex}
-                  className={`text-center transition-all duration-300 w-full ${
-                    isCurrent
-                      ? 'text-xl md:text-4xl 2xl:text-5xl 3xl:text-6xl font-bold scale-100 opacity-100'
-                      : isPast
-                        ? 'text-base md:text-xl 2xl:text-2xl 3xl:text-3xl opacity-40 scale-95'
-                        : 'text-base md:text-xl 2xl:text-2xl 3xl:text-3xl opacity-60 scale-95'
-                  }`}
+                    className={`text-center transition-all duration-300 w-full ${
+                      isCurrent
+                        ? 'text-xl md:text-4xl 2xl:text-5xl 3xl:text-6xl font-bold scale-100 opacity-100'
+                        : isPast
+                          ? 'text-base md:text-xl 2xl:text-2xl 3xl:text-3xl opacity-40 scale-95'
+                          : 'text-base md:text-xl 2xl:text-2xl 3xl:text-3xl opacity-60 scale-95'
+                    }`}
                   >
-                    <div className="relative inline-block">
-                      <span className="text-muted-foreground">{line.text}</span>
-                      {isCurrent && (
+                    <span>
+                      {chars.map((char, charIdx) => (
                         <span
-                          className="absolute left-0 top-0 text-primary overflow-hidden whitespace-nowrap"
-                          style={{ width: `${lineProgress * 100}%` }}
+                          key={charIdx}
+                          className={
+                            charIdx < highlightedCharCount
+                              ? isPast
+                                ? 'text-primary/70'
+                                : 'text-primary'
+                              : 'text-muted-foreground'
+                          }
                         >
-                          {line.text}
+                          {char}
                         </span>
-                      )}
-                      {isPast && (
-                        <span className="absolute left-0 top-0 text-primary/70 overflow-hidden whitespace-nowrap w-full">
-                          {line.text}
-                        </span>
-                      )}
-                    </div>
+                      ))}
+                    </span>
                   </div>
                 );
               })
