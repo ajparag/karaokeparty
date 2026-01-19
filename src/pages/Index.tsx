@@ -177,7 +177,7 @@ const Index = () => {
     setLyricsSearchResults([]);
     setSelectedLyricsId("");
 
-    // Pre-fill with cleaned track info (artist blank by default for better LRCLIB matches)
+    // Pre-fill with cleaned track info
     const cleanTitle =
       track.title
         ?.replace(/\(.*?\)/g, "")
@@ -185,8 +185,11 @@ const Index = () => {
         ?.replace(/karaoke|instrumental|lyrics|official|video|audio|hd|4k/gi, "")
         ?.trim() || "";
 
+    // Extract first artist name (artists may be comma-separated)
+    const firstArtist = track.artist?.split(',')[0]?.trim() || "";
+
     setLyricsSearchTitle(cleanTitle);
-    setLyricsSearchArtist("");
+    setLyricsSearchArtist(firstArtist);
     setLyricsDialogOpen(true);
 
     // Start AI vocal separation in the background (will be cached in IndexedDB)
@@ -202,8 +205,8 @@ const Index = () => {
       });
     }
 
-    // Auto-fetch lyrics with multiple results (no artist for broader search)
-    fetchLyrics(cleanTitle, "");
+    // Auto-fetch lyrics with multiple results using first artist for better LRCLIB matches
+    fetchLyrics(cleanTitle, firstArtist);
   };
 
   // Reset separation state when dialog closes
