@@ -942,10 +942,10 @@ const Sing = () => {
                     key={actualIndex}
                     className={`text-center transition-all duration-300 w-full ${
                       isCurrent
-                        ? 'text-xl md:text-4xl 2xl:text-5xl 3xl:text-6xl font-bold scale-100 opacity-100'
+                        ? 'text-xl md:text-3xl lg:text-4xl 2xl:text-5xl 3xl:text-6xl 4xl:text-7xl 5xl:text-8xl font-bold scale-100 opacity-100'
                         : isPast
-                          ? 'text-base md:text-xl 2xl:text-2xl 3xl:text-3xl opacity-40 scale-95'
-                          : 'text-base md:text-xl 2xl:text-2xl 3xl:text-3xl opacity-60 scale-95'
+                          ? 'text-base md:text-lg lg:text-xl 2xl:text-2xl 3xl:text-3xl 4xl:text-4xl 5xl:text-5xl opacity-40 scale-95'
+                          : 'text-base md:text-lg lg:text-xl 2xl:text-2xl 3xl:text-3xl 4xl:text-4xl 5xl:text-5xl opacity-60 scale-95'
                     }`}
                   >
                     <span>
@@ -973,71 +973,71 @@ const Sing = () => {
       </div>
 
       {/* Score Display */}
-      <div className="glass border-t border-border p-2 md:p-4 shrink-0">
-        <div className="flex items-center justify-between max-w-4xl mx-auto">
-          <div className="flex items-center gap-2 md:gap-4">
+      <div className="glass border-t border-border p-2 md:p-4 3xl:p-6 4xl:p-8 shrink-0">
+        <div className="flex items-center justify-between max-w-4xl 3xl:max-w-6xl 4xl:max-w-7xl mx-auto">
+          <div className="flex items-center gap-2 md:gap-4 3xl:gap-6">
             <div className="text-center">
-              <p className="text-xl md:text-3xl font-bold text-gradient-gold">{totalScore}</p>
-              <p className="text-[10px] md:text-xs text-muted-foreground">Score</p>
+              <p className="text-xl md:text-3xl 3xl:text-4xl 4xl:text-5xl font-bold text-gradient-gold">{totalScore}</p>
+              <p className="text-[10px] md:text-xs 3xl:text-sm 4xl:text-base text-muted-foreground">Score</p>
             </div>
-            <div className={`text-lg md:text-2xl font-bold ${rating.color}`}>
+            <div className={`text-lg md:text-2xl 3xl:text-3xl 4xl:text-4xl font-bold ${rating.color}`}>
               {rating.letter}
             </div>
           </div>
 
           {/* Live Metrics */}
           {isMicActive && (
-            <div className="hidden md:flex items-center gap-3">
+            <div className="hidden md:flex items-center gap-3 3xl:gap-5 4xl:gap-6">
               <div className="text-center">
-                <div className={`h-1 w-12 rounded-full ${getScoreColor(metrics.pitchAccuracy)}`} />
-                <p className="text-xs text-muted-foreground mt-1">Pitch</p>
+                <div className={`h-1 3xl:h-2 4xl:h-3 w-12 3xl:w-16 4xl:w-20 rounded-full ${getScoreColor(metrics.pitchAccuracy)}`} />
+                <p className="text-xs 3xl:text-sm 4xl:text-base text-muted-foreground mt-1">Pitch</p>
               </div>
               <div className="text-center">
-                <div className={`h-1 w-12 rounded-full ${getScoreColor(metrics.diction)}`} />
-                <p className="text-xs text-muted-foreground mt-1">Diction</p>
+                <div className={`h-1 3xl:h-2 4xl:h-3 w-12 3xl:w-16 4xl:w-20 rounded-full ${getScoreColor(metrics.diction)}`} />
+                <p className="text-xs 3xl:text-sm 4xl:text-base text-muted-foreground mt-1">Diction</p>
               </div>
               <div className="text-center">
-                <div className={`h-1 w-12 rounded-full ${getScoreColor(metrics.technique)}`} />
-                <p className="text-xs text-muted-foreground mt-1">Technique</p>
+                <div className={`h-1 3xl:h-2 4xl:h-3 w-12 3xl:w-16 4xl:w-20 rounded-full ${getScoreColor(metrics.technique)}`} />
+                <p className="text-xs 3xl:text-sm 4xl:text-base text-muted-foreground mt-1">Technique</p>
               </div>
               <div className="text-center">
-                <div className={`h-1 w-12 rounded-full ${getScoreColor(metrics.rhythm)}`} />
-                <p className="text-xs text-muted-foreground mt-1">Rhythm</p>
+                <div className={`h-1 3xl:h-2 4xl:h-3 w-12 3xl:w-16 4xl:w-20 rounded-full ${getScoreColor(metrics.rhythm)}`} />
+                <p className="text-xs 3xl:text-sm 4xl:text-base text-muted-foreground mt-1">Rhythm</p>
               </div>
             </div>
           )}
 
           {/* Controls */}
-          <div className="flex items-center gap-1 md:gap-2">
+          <div className="flex items-center gap-1 md:gap-2 3xl:gap-4">
             <Button
               variant="outline"
               size="icon"
               onClick={toggleMic}
-              className={`w-9 h-9 md:w-10 md:h-10 ${isMicActive ? 'bg-primary text-primary-foreground' : ''}`}
+              className={`w-9 h-9 md:w-10 md:h-10 3xl:w-14 3xl:h-14 4xl:w-16 4xl:h-16 ${isMicActive ? 'bg-primary text-primary-foreground' : ''}`}
             >
-              {isMicActive ? <Mic className="w-4 h-4 md:w-5 md:h-5" /> : <MicOff className="w-4 h-4 md:w-5 md:h-5" />}
+              {isMicActive ? <Mic className="w-4 h-4 md:w-5 md:h-5 3xl:w-7 3xl:h-7 4xl:w-8 4xl:h-8" /> : <MicOff className="w-4 h-4 md:w-5 md:h-5 3xl:w-7 3xl:h-7 4xl:w-8 4xl:h-8" />}
             </Button>
             
             <Button
               size="lg"
               onClick={togglePlay}
               disabled={!isPlayerReady || isLoadingFromCache || !separatedAudio}
-              className="gradient-primary text-primary-foreground w-12 h-12 md:w-16 md:h-16 rounded-full disabled:opacity-50"
+              className="gradient-primary text-primary-foreground w-12 h-12 md:w-16 md:h-16 3xl:w-20 3xl:h-20 4xl:w-24 4xl:h-24 rounded-full disabled:opacity-50"
               title={!separatedAudio ? 'Waiting for AI separation...' : isPlaying ? 'Pause' : 'Play'}
             >
-              {isLoadingFromCache ? <Loader2 className="w-6 h-6 md:w-8 md:h-8 animate-spin" /> : isPlaying ? <Pause className="w-6 h-6 md:w-8 md:h-8" /> : <Play className="w-6 h-6 md:w-8 md:h-8 ml-0.5" />}
+              {isLoadingFromCache ? <Loader2 className="w-6 h-6 md:w-8 md:h-8 3xl:w-10 3xl:h-10 4xl:w-12 4xl:h-12 animate-spin" /> : isPlaying ? <Pause className="w-6 h-6 md:w-8 md:h-8 3xl:w-10 3xl:h-10 4xl:w-12 4xl:h-12" /> : <Play className="w-6 h-6 md:w-8 md:h-8 3xl:w-10 3xl:h-10 4xl:w-12 4xl:h-12 ml-0.5" />}
             </Button>
 
-            <Button variant="outline" size="icon" onClick={handleRestart} className="w-9 h-9 md:w-10 md:h-10">
-              <RotateCcw className="w-4 h-4 md:w-5 md:h-5" />
+            <Button variant="outline" size="icon" onClick={handleRestart} className="w-9 h-9 md:w-10 md:h-10 3xl:w-14 3xl:h-14 4xl:w-16 4xl:h-16">
+              <RotateCcw className="w-4 h-4 md:w-5 md:h-5 3xl:w-7 3xl:h-7 4xl:w-8 4xl:h-8" />
             </Button>
           </div>
         </div>
 
         {/* Progress Bar */}
-        <div className="max-w-4xl mx-auto mt-2 md:mt-4">
+        <div className="max-w-4xl 3xl:max-w-6xl 4xl:max-w-7xl mx-auto mt-2 md:mt-4 3xl:mt-6">
           <div
-            className="h-1 bg-muted rounded-full cursor-pointer"
+            className="h-1 3xl:h-2 4xl:h-3 bg-muted rounded-full cursor-pointer"
             onClick={(e) => {
               const rect = e.currentTarget.getBoundingClientRect();
               const percent = (e.clientX - rect.left) / rect.width;
@@ -1056,7 +1056,7 @@ const Sing = () => {
               style={{ width: `${(currentTime / duration) * 100}%` }}
             />
           </div>
-          <div className="flex justify-between text-[10px] md:text-xs text-muted-foreground mt-0.5 md:mt-1">
+          <div className="flex justify-between text-[10px] md:text-xs 3xl:text-sm 4xl:text-base text-muted-foreground mt-0.5 md:mt-1">
             <span>{formatDuration(currentTime)}</span>
             <span>{formatDuration(duration)}</span>
           </div>
