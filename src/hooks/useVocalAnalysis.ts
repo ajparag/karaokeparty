@@ -1,4 +1,10 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { 
+  requestMicrophone, 
+  createAudioContext, 
+  formatMicrophoneError, 
+  cleanupAudio 
+} from '@/lib/audioPermissions';
 
 const hasDevanagari = (text: string) => /[\u0900-\u097F]/.test(text);
 
@@ -492,60 +498,15 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       setMetrics((prev) => ({ ...prev, diction: 0, transcribedText: '' }));
       setTranscriptionError(null);
 
-      // iOS Safari fix: Reset audio session to 'auto' BEFORE requesting microphone
-      // This ensures iOS doesn't get stuck in a bad audio routing state
-      if ('audioSession' in navigator && (navigator as any).audioSession) {
-        try {
-          (navigator as any).audioSession.type = 'auto';
-          console.log('[audio] Reset audio session type to auto before mic request');
-        } catch (e) {
-          console.log('[audio] Could not reset audio session type:', e);
-        }
-      }
-
-      // Request microphone with minimal constraints for iOS compatibility
-      // On iOS Safari 17+, complex constraints can cause silent failures
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
-
+      // Use centralized microphone and AudioContext initialization
+      const stream = await requestMicrophone();
       streamRef.current = stream;
       setHasPermission(true);
-      console.log('[audio] Microphone stream obtained, tracks:', stream.getAudioTracks().length);
 
-      // iOS Safari fix: "Kick" audio session to 'play-and-record' AFTER getting the stream
-      // This forces iOS to properly route audio for simultaneous playback and recording
-      if ('audioSession' in navigator && (navigator as any).audioSession) {
-        try {
-          (navigator as any).audioSession.type = 'play-and-record';
-          console.log('[audio] Set audio session type to play-and-record');
-        } catch (e) {
-          console.log('[audio] Could not set audio session type:', e);
-        }
-      }
-
-      // Use webkitAudioContext fallback for older Safari versions
-      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-      if (!AudioContextClass) {
-        throw new Error('AudioContext not supported on this browser');
-      }
-
-      // Create audio context with playback latency hint to favor media mode
-      const audioContext = new AudioContextClass({ latencyHint: 'playback' });
+      const audioContext = await createAudioContext();
       audioContextRef.current = audioContext;
       inputSampleRateRef.current = audioContext.sampleRate;
       console.log('[audio] AudioContext created', { sampleRate: audioContext.sampleRate, state: audioContext.state });
-
-      // Resume AudioContext if suspended (required on mobile browsers)
-      if (audioContext.state === 'suspended') {
-        console.log('[audio] AudioContext suspended, resuming...');
-        await audioContext.resume();
-        console.log('[audio] AudioContext resumed:', audioContext.state);
-      }
 
       // Set up analyser for pitch/volume
       const analyser = audioContext.createAnalyser();
@@ -588,15 +549,7 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
       analyze();
     } catch (err) {
       console.error('[audio] Failed to start vocal analysis:', err);
-      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-      // Provide more helpful error for Safari/iOS users
-      if (errorMessage.includes('not allowed') || errorMessage.includes('Permission denied') || errorMessage.includes('NotAllowedError')) {
-        setError('Microphone blocked. Check Settings > Safari > Microphone');
-      } else if (errorMessage.includes('NotFoundError')) {
-        setError('No microphone found on this device');
-      } else {
-        setError('Microphone access denied');
-      }
+      setError(formatMicrophoneError(err));
       setHasPermission(false);
     }
   }, [detectPitch, calculateMetrics, options, connectWebSocket]);
@@ -630,15 +583,10 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     }
     wsConnectedRef.current = false;
 
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
-    }
-
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
-      audioContextRef.current = null;
-    }
+    // Clean up audio resources using centralized utility
+    cleanupAudio(streamRef.current, audioContextRef.current);
+    streamRef.current = null;
+    audioContextRef.current = null;
 
     analyserRef.current = null;
     setIsActive(false);

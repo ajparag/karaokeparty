@@ -1,4 +1,9 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { 
+  requestMicrophone, 
+  createAudioContext, 
+  cleanupAudio 
+} from '@/lib/audioPermissions';
 
 interface UseSpeechmaticsRealtimeOptions {
   onPartialTranscript?: (text: string) => void;
@@ -43,52 +48,12 @@ export function useSpeechmaticsRealtime(options: UseSpeechmaticsRealtimeOptions 
     setError(null);
 
     try {
-      // iOS Safari fix: Reset audio session to 'auto' BEFORE requesting microphone
-      if ('audioSession' in navigator && (navigator as any).audioSession) {
-        try {
-          (navigator as any).audioSession.type = 'auto';
-          console.log('[speechmatics-rt] Reset audio session type to auto');
-        } catch (e) {
-          console.log('[speechmatics-rt] Could not reset audio session type:', e);
-        }
-      }
-
-      // Get microphone access with minimal constraints for iOS compatibility
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
+      // Use centralized microphone and AudioContext initialization
+      const stream = await requestMicrophone();
       streamRef.current = stream;
-      console.log('[speechmatics-rt] Microphone stream obtained, tracks:', stream.getAudioTracks().length);
 
-      // iOS Safari fix: "Kick" audio session to 'play-and-record' AFTER getting the stream
-      if ('audioSession' in navigator && (navigator as any).audioSession) {
-        try {
-          (navigator as any).audioSession.type = 'play-and-record';
-          console.log('[speechmatics-rt] Set audio session type to play-and-record');
-        } catch (e) {
-          console.log('[speechmatics-rt] Could not set audio session type:', e);
-        }
-      }
-
-      // Use webkitAudioContext fallback for older Safari versions
-      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-      if (!AudioContextClass) {
-        throw new Error('AudioContext not supported on this browser');
-      }
-
-      const audioContext = new AudioContextClass({ latencyHint: 'playback' });
+      const audioContext = await createAudioContext();
       audioContextRef.current = audioContext;
-
-      // Resume AudioContext if suspended (required on iOS Safari)
-      if (audioContext.state === 'suspended') {
-        console.log('[speechmatics-rt] AudioContext suspended, resuming...');
-        await audioContext.resume();
-        console.log('[speechmatics-rt] AudioContext resumed:', audioContext.state);
-      }
 
       const inputSampleRate = audioContext.sampleRate;
       console.log('[speechmatics-rt] Audio context sample rate:', inputSampleRate);
@@ -185,15 +150,10 @@ export function useSpeechmaticsRealtime(options: UseSpeechmaticsRealtimeOptions 
       sourceRef.current = null;
     }
 
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
-
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
-      audioContextRef.current = null;
-    }
+    // Clean up audio resources using centralized utility
+    cleanupAudio(streamRef.current, audioContextRef.current);
+    streamRef.current = null;
+    audioContextRef.current = null;
 
     // Close WebSocket
     if (wsRef.current) {
