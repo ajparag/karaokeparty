@@ -1,4 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
+import { 
+  requestMicrophone, 
+  createAudioContext, 
+  formatMicrophoneError, 
+  cleanupAudio 
+} from '@/lib/audioPermissions';
 
 interface PitchVisualizerProps {
   isActive: boolean;
@@ -29,52 +35,12 @@ export function PitchVisualizer({ isActive, onRhythmData, compact = false }: Pit
 
     const initAudio = async () => {
       try {
-        // iOS Safari fix: Reset audio session to 'auto' BEFORE requesting microphone
-        if ('audioSession' in navigator && (navigator as any).audioSession) {
-          try {
-            (navigator as any).audioSession.type = 'auto';
-            console.log('[PitchVisualizer] Reset audio session type to auto');
-          } catch (e) {
-            console.log('[PitchVisualizer] Could not reset audio session type:', e);
-          }
-        }
-
-        // Request microphone with minimal constraints for iOS compatibility
-        const stream = await navigator.mediaDevices.getUserMedia({ 
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          } 
-        });
+        // Use centralized microphone and AudioContext initialization
+        const stream = await requestMicrophone();
         setHasPermission(true);
         setError(null);
-        console.log('[PitchVisualizer] Microphone stream obtained');
 
-        // iOS Safari fix: "Kick" audio session to 'play-and-record' AFTER getting the stream
-        if ('audioSession' in navigator && (navigator as any).audioSession) {
-          try {
-            (navigator as any).audioSession.type = 'play-and-record';
-            console.log('[PitchVisualizer] Set audio session type to play-and-record');
-          } catch (e) {
-            console.log('[PitchVisualizer] Could not set audio session type:', e);
-          }
-        }
-
-        // Use webkitAudioContext fallback for older Safari versions
-        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-        if (!AudioContextClass) {
-          throw new Error('AudioContext not supported');
-        }
-        
-        audioContextRef.current = new AudioContextClass({ latencyHint: 'playback' });
-        
-        // Resume AudioContext if suspended (required on iOS Safari)
-        if (audioContextRef.current.state === 'suspended') {
-          console.log('[PitchVisualizer] AudioContext suspended, resuming...');
-          await audioContextRef.current.resume();
-          console.log('[PitchVisualizer] AudioContext resumed:', audioContextRef.current.state);
-        }
+        audioContextRef.current = await createAudioContext();
         
         analyserRef.current = audioContextRef.current.createAnalyser();
         analyserRef.current.fftSize = 2048;
@@ -86,13 +52,7 @@ export function PitchVisualizer({ isActive, onRhythmData, compact = false }: Pit
         startVisualization();
       } catch (err) {
         console.error('[PitchVisualizer] Microphone access denied:', err);
-        const errorMessage = err instanceof Error ? err.message : 'Microphone access required';
-        // Provide more helpful error for Safari/iOS users
-        if (errorMessage.includes('not allowed') || errorMessage.includes('Permission denied')) {
-          setError('Microphone blocked. Check Settings > Safari > Microphone');
-        } else {
-          setError('Microphone access required for scoring');
-        }
+        setError(formatMicrophoneError(err));
         setHasPermission(false);
       }
     };
@@ -103,9 +63,7 @@ export function PitchVisualizer({ isActive, onRhythmData, compact = false }: Pit
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current);
       }
-      if (audioContextRef.current?.state !== 'closed') {
-        audioContextRef.current?.close();
-      }
+      cleanupAudio(null, audioContextRef.current);
     };
   }, [isActive]);
 
