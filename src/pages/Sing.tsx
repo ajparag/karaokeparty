@@ -19,7 +19,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { ArrowLeft, Play, Pause, Mic, MicOff, RotateCcw, Save, Volume2, VolumeX, Edit2, Search, Music, Check, Music2, Loader2 } from "lucide-react";
+import { ArrowLeft, Play, Pause, Mic, MicOff, RotateCcw, Save, Volume2, VolumeX, Edit2, Search, Music, Check, Loader2 } from "lucide-react";
+import { VocalsIcon } from "@/components/icons/VocalsIcon";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -773,7 +774,7 @@ const Sing = () => {
             className={`shrink-0 gap-1.5 ${vocalsEnabled ? 'bg-primary hover:bg-primary/90' : ''}`}
             title={vocalsEnabled ? 'Vocals playing at 80%' : 'Enable vocals (80% volume)'}
           >
-            <Music2 className="w-4 h-4" />
+            <VocalsIcon className="w-4 h-4" isActive={vocalsEnabled} />
             <span className="hidden sm:inline">
               {vocalsEnabled ? 'Vocals On' : 'Vocals Off'}
             </span>
