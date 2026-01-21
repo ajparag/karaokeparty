@@ -343,21 +343,41 @@ const Sing = () => {
     const sampleScore = () => {
       const currentMetrics = metricsRef.current;
       
-      if (currentMetrics.isVoiceDetected || currentMetrics.diction > 0) {
-        scoreAccumulatorRef.current.pitch += currentMetrics.pitchAccuracy;
-        scoreAccumulatorRef.current.rhythm += currentMetrics.rhythm;
-        scoreAccumulatorRef.current.diction += currentMetrics.diction;
-        scoreAccumulatorRef.current.technique += currentMetrics.technique;
+      // Always sample if we have any activity - volume, voice, diction, or transcription
+      const hasActivity = currentMetrics.isVoiceDetected || 
+                          currentMetrics.diction > 0 || 
+                          currentMetrics.volume > 0.01 ||
+                          (currentMetrics.transcribedText && currentMetrics.transcribedText.length > 0);
+      
+      if (hasActivity) {
+        // Use at least base scores if metrics haven't built up yet
+        const pitch = currentMetrics.pitchAccuracy || (currentMetrics.isVoiceDetected ? 60 : 0);
+        const rhythm = currentMetrics.rhythm || (currentMetrics.isVoiceDetected ? 60 : 0);
+        const diction = currentMetrics.diction || (currentMetrics.transcribedText ? 55 : 0);
+        const technique = currentMetrics.technique || (currentMetrics.isVoiceDetected ? 55 : 0);
+        
+        scoreAccumulatorRef.current.pitch += pitch;
+        scoreAccumulatorRef.current.rhythm += rhythm;
+        scoreAccumulatorRef.current.diction += diction;
+        scoreAccumulatorRef.current.technique += technique;
         scoreAccumulatorRef.current.deductions += currentMetrics.deductions;
         scoreAccumulatorRef.current.count += 1;
         
         console.log('[score] Sampled:', {
-          pitch: currentMetrics.pitchAccuracy,
-          rhythm: currentMetrics.rhythm,
-          diction: currentMetrics.diction,
-          technique: currentMetrics.technique,
+          pitch,
+          rhythm,
+          diction,
+          technique,
           voice: currentMetrics.isVoiceDetected,
+          volume: currentMetrics.volume.toFixed(3),
+          text: currentMetrics.transcribedText?.substring(0, 20),
           count: scoreAccumulatorRef.current.count
+        });
+      } else {
+        console.log('[score] No activity:', {
+          voice: currentMetrics.isVoiceDetected,
+          volume: currentMetrics.volume.toFixed(3),
+          diction: currentMetrics.diction
         });
       }
 

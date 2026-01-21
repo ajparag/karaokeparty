@@ -300,7 +300,8 @@ export function useVocalAnalysis(options: UseVocalAnalysisOptions = {}) {
     currentVolume: number,
     now: number
   ): VocalMetrics => {
-    const isVoiceDetected = currentVolume > 0.05;
+    // Lower threshold for better device compatibility (was 0.05, now 0.02)
+    const isVoiceDetected = currentVolume > 0.02;
     const shouldUpdatePitch = isVoiceDetected && currentPitch > 0;
 
     if (shouldUpdatePitch) {
