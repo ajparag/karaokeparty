@@ -8,6 +8,50 @@ interface SeparationResult {
   fromCache?: boolean;
 }
 
+// Audio prefetch cache - stores downloaded blobs before separation starts
+const audioPrefetchCache = new Map<string, { blob: Blob; timestamp: number }>();
+const PREFETCH_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+// Prefetch audio in background (called on track hover/click)
+export async function prefetchAudio(audioUrl: string): Promise<void> {
+  // Already prefetched recently?
+  const cached = audioPrefetchCache.get(audioUrl);
+  if (cached && Date.now() - cached.timestamp < PREFETCH_CACHE_TTL) {
+    return;
+  }
+
+  try {
+    console.log('[VocalSeparation] Prefetching audio:', audioUrl.slice(0, 50));
+    const response = await fetch(audioUrl);
+    if (response.ok) {
+      const blob = await response.blob();
+      audioPrefetchCache.set(audioUrl, { blob, timestamp: Date.now() });
+      console.log('[VocalSeparation] Audio prefetched:', Math.round(blob.size / 1024), 'KB');
+    }
+  } catch (err) {
+    console.warn('[VocalSeparation] Prefetch failed:', err);
+  }
+}
+
+// Get prefetched audio or download fresh
+async function getAudioBlob(audioUrl: string): Promise<Blob> {
+  // Check prefetch cache first
+  const cached = audioPrefetchCache.get(audioUrl);
+  if (cached && Date.now() - cached.timestamp < PREFETCH_CACHE_TTL) {
+    console.log('[VocalSeparation] Using prefetched audio');
+    audioPrefetchCache.delete(audioUrl); // Clean up after use
+    return cached.blob;
+  }
+
+  // Download fresh
+  console.log('[VocalSeparation] Downloading audio...');
+  const response = await fetch(audioUrl);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch audio: ${response.statusText}`);
+  }
+  return response.blob();
+}
+
 export function useVocalSeparation() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState<string>('');
@@ -45,30 +89,21 @@ export function useVocalSeparation() {
         return result;
       }
 
-      setProgress('Downloading audio...');
+      setProgress('Preparing audio...');
 
-      // Fetch the audio from client side (works with CORS) and convert to base64
-      const audioResponse = await fetch(audioUrl);
-      if (!audioResponse.ok) {
-        throw new Error(`Failed to fetch audio: ${audioResponse.statusText}`);
-      }
-      
-      const audioBlob = await audioResponse.blob();
+      // Get audio blob (from prefetch cache or fresh download)
+      const audioBlob = await getAudioBlob(audioUrl);
       setProgress(`Processing audio (${Math.round(audioBlob.size / 1024)}KB)...`);
-      
-      // Convert blob to base64
-      const arrayBuffer = await audioBlob.arrayBuffer();
-      const uint8Array = new Uint8Array(arrayBuffer);
-      let binary = '';
-      for (let i = 0; i < uint8Array.length; i++) {
-        binary += String.fromCharCode(uint8Array[i]);
-      }
-      const audioBase64 = btoa(binary);
+
+      // Use FormData for streaming upload (no base64 overhead!)
+      const formData = new FormData();
+      formData.append('audio', audioBlob, 'audio.mp4');
       
       setProgress('AI vocal separation (1-2 min)...');
       
+      // Call edge function with FormData (streaming)
       const { data, error: fnError } = await supabase.functions.invoke('separate-vocals', {
-        body: { audioBase64 },
+        body: formData,
       });
 
       if (fnError) {

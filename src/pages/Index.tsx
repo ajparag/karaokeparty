@@ -15,7 +15,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Mic, Music, Trophy, Sparkles, Loader2, Play, Search, Edit2, Check } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { useVocalSeparation } from "@/hooks/useVocalSeparation";
+import { useVocalSeparation, prefetchAudio } from "@/hooks/useVocalSeparation";
 
 interface Track {
   id: string;
@@ -390,6 +390,12 @@ const Index = () => {
                       key={track.id}
                       className="group p-3 rounded-xl bg-card border border-border hover:border-primary/50 transition-all cursor-pointer"
                       onClick={() => handleSelectTrack(track)}
+                      onMouseEnter={() => {
+                        // Prefetch audio on hover for faster separation
+                        if (track.audioUrl) {
+                          prefetchAudio(track.audioUrl);
+                        }
+                      }}
                     >
                       <div className="flex items-center gap-3">
                         {/* Thumbnail */}
