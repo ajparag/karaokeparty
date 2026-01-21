@@ -346,23 +346,30 @@ const Index = () => {
                 {isLoadingTrending ? "Loading trending..." : "Trending:"}
               </p>
               <div className="flex flex-wrap justify-center gap-2">
-                {(trendingSongs.length > 0
-                  ? trendingSongs
-                  : ["Tum Hi Ho", "Kesariya", "Kal Ho Naa Ho", "Chaiyya Chaiyya", "Mere Sapno Ki Rani"]
-                ).map((term) => (
-                  <Button
-                    key={term}
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      setQuery(term);
-                      setTimeout(() => handleSearch(), 100);
-                    }}
-                    className="border-border hover:bg-muted text-xs"
-                  >
-                    {term}
-                  </Button>
-                ))}
+                {isLoadingTrending ? (
+                  // Show skeleton placeholders while loading
+                  Array.from({ length: 5 }).map((_, i) => (
+                    <div
+                      key={i}
+                      className="h-8 w-20 rounded-md bg-muted animate-pulse"
+                    />
+                  ))
+                ) : (
+                  trendingSongs.map((term) => (
+                    <Button
+                      key={term}
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setQuery(term);
+                        setTimeout(() => handleSearch(), 100);
+                      }}
+                      className="border-border hover:bg-muted text-xs"
+                    >
+                      {term}
+                    </Button>
+                  ))
+                )}
               </div>
             </div>
           </div>
