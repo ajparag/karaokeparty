@@ -24,7 +24,7 @@ import { VocalsIcon } from "@/components/icons/VocalsIcon";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { useVocalAnalysis } from "@/hooks/useVocalAnalysis";
+import { useVocalsComparison } from "@/hooks/useVocalsComparison";
 import { useAuth } from "@/hooks/useAuth";
 import { Slider } from "@/components/ui/slider";
 import { useVocalSeparation } from "@/hooks/useVocalSeparation";
@@ -89,25 +89,11 @@ const Sing = () => {
   // Vocals audio (plays at 50% volume when enabled)
   const vocalsAudioRef = useRef<HTMLAudioElement | null>(null);
   const timeSyncRafRef = useRef<number | null>(null);
-  const scoreAccumulatorRef = useRef({ pitch: 0, rhythm: 0, diction: 0, technique: 0, deductions: 0, count: 0 });
+  const scoreAccumulatorRef = useRef({ pitch: 0, rhythm: 0, technique: 0, count: 0 });
   const lastScoreSampleAtRef = useRef(0);
 
-  // New scoring weights from karaoke formula: Pitch 30%, Diction 30%, Technique 20%, Rhythm 20%
-  const SCORE_WEIGHTS = useRef({ pitch: 0.3, diction: 0.3, technique: 0.2, rhythm: 0.2 }).current;
-
-  const {
-    isActive: isMicActive,
-    metrics,
-    isTranscriptionDisabled,
-    transcriptionError,
-    isModelLoading,
-    loadProgress,
-    isModelReady,
-    startAnalysis,
-    stopAnalysis,
-    resetScores,
-    retryTranscription,
-  } = useVocalAnalysis();
+  // New scoring weights: Pitch 40%, Rhythm 30%, Technique 30% (no diction)
+  const SCORE_WEIGHTS = useRef({ pitch: 0.4, rhythm: 0.3, technique: 0.3 }).current;
 
   // AI-based vocal separation - loads from IndexedDB cache (separation happens on Index page)
   const {
@@ -116,6 +102,20 @@ const Sing = () => {
     separatedAudio,
     separateVocals: loadFromCache,
   } = useVocalSeparation();
+
+  // Vocals comparison hook - compares user singing with AI-separated vocals
+  const {
+    isActive: isMicActive,
+    metrics,
+    error: micError,
+    startAnalysis,
+    stopAnalysis,
+    resetScores,
+  } = useVocalsComparison({
+    vocalsUrl: separatedAudio?.vocalsUrl,
+    currentTime,
+    isPlaying,
+  });
 
   // Vocals ON/OFF toggle (plays vocals at 50% volume when ON)
   const [vocalsEnabled, setVocalsEnabled] = useState(true);
@@ -343,63 +343,48 @@ const Sing = () => {
     const sampleScore = () => {
       const currentMetrics = metricsRef.current;
       
-      // Always sample if we have any activity - volume, voice, diction, or transcription
-      const hasActivity = currentMetrics.isVoiceDetected || 
-                          currentMetrics.diction > 0 || 
-                          currentMetrics.volume > 0.01 ||
-                          (currentMetrics.transcribedText && currentMetrics.transcribedText.length > 0);
+      // Sample if we have any voice activity or volume
+      const hasActivity = currentMetrics.isVoiceDetected || currentMetrics.volume > 0.01;
       
       if (hasActivity) {
-        // Use at least base scores if metrics haven't built up yet
-        const pitch = currentMetrics.pitchAccuracy || (currentMetrics.isVoiceDetected ? 60 : 0);
-        const rhythm = currentMetrics.rhythm || (currentMetrics.isVoiceDetected ? 60 : 0);
-        const diction = currentMetrics.diction || (currentMetrics.transcribedText ? 55 : 0);
-        const technique = currentMetrics.technique || (currentMetrics.isVoiceDetected ? 55 : 0);
+        // Use comparison-based metrics from vocals comparison hook
+        const pitch = currentMetrics.pitchMatch || (currentMetrics.isVoiceDetected ? 60 : 0);
+        const rhythm = currentMetrics.rhythmMatch || (currentMetrics.isVoiceDetected ? 60 : 0);
+        const technique = currentMetrics.techniqueMatch || (currentMetrics.isVoiceDetected ? 55 : 0);
         
         scoreAccumulatorRef.current.pitch += pitch;
         scoreAccumulatorRef.current.rhythm += rhythm;
-        scoreAccumulatorRef.current.diction += diction;
         scoreAccumulatorRef.current.technique += technique;
-        scoreAccumulatorRef.current.deductions += currentMetrics.deductions;
         scoreAccumulatorRef.current.count += 1;
         
         console.log('[score] Sampled:', {
           pitch,
           rhythm,
-          diction,
           technique,
           voice: currentMetrics.isVoiceDetected,
+          refActive: currentMetrics.referenceActive,
           volume: currentMetrics.volume.toFixed(3),
-          text: currentMetrics.transcribedText?.substring(0, 20),
           count: scoreAccumulatorRef.current.count
         });
       } else {
         console.log('[score] No activity:', {
           voice: currentMetrics.isVoiceDetected,
-          volume: currentMetrics.volume.toFixed(3),
-          diction: currentMetrics.diction
+          volume: currentMetrics.volume.toFixed(3)
         });
       }
 
       if (scoreAccumulatorRef.current.count > 0) {
         const avgPitch = scoreAccumulatorRef.current.pitch / scoreAccumulatorRef.current.count;
         const avgRhythm = scoreAccumulatorRef.current.rhythm / scoreAccumulatorRef.current.count;
-        const avgDiction = scoreAccumulatorRef.current.diction / scoreAccumulatorRef.current.count;
         const avgTechnique = scoreAccumulatorRef.current.technique / scoreAccumulatorRef.current.count;
-        const avgDeductions = scoreAccumulatorRef.current.deductions / scoreAccumulatorRef.current.count;
 
-        // Formula: Score = (Wp · P) + (Wr · R) + (Wt · T) + (Wd · D) - E
+        // Formula: Score = (Wp · P) + (Wr · R) + (Wt · T) - no diction, no deductions
         const combined =
           avgPitch * SCORE_WEIGHTS.pitch +
-          avgDiction * SCORE_WEIGHTS.diction +
-          avgTechnique * SCORE_WEIGHTS.technique +
-          avgRhythm * SCORE_WEIGHTS.rhythm;
-        
-        // Apply deductions (E in the formula) - reduced to max 10% of score
-        const deductionPenalty = (avgDeductions / 100) * 0.1 * combined;
-        const finalScore = Math.max(0, combined - deductionPenalty);
+          avgRhythm * SCORE_WEIGHTS.rhythm +
+          avgTechnique * SCORE_WEIGHTS.technique;
 
-        setTotalScore(Math.round(finalScore * 10));
+        setTotalScore(Math.round(combined * 10));
       }
     };
 
@@ -583,7 +568,7 @@ const Sing = () => {
   const handleRestart = useCallback(() => {
     setCurrentTime(0);
     setTotalScore(0);
-    scoreAccumulatorRef.current = { pitch: 0, rhythm: 0, diction: 0, technique: 0, deductions: 0, count: 0 };
+    scoreAccumulatorRef.current = { pitch: 0, rhythm: 0, technique: 0, count: 0 };
     lastScoreSampleAtRef.current = 0;
     resetScores();
     setShowResults(false);
@@ -845,30 +830,14 @@ const Sing = () => {
             </p>
             <p className="text-5xl font-bold text-gradient-gold mb-8">{totalScore}</p>
             
-            <div className="grid grid-cols-2 gap-3 mb-6">
+            <div className="grid grid-cols-3 gap-4 mb-6">
               <div className="text-center p-3 bg-muted/30 rounded-lg">
                 <p className="text-xl font-semibold">
                   {scoreAccumulatorRef.current.count > 0 
                     ? Math.round(scoreAccumulatorRef.current.pitch / scoreAccumulatorRef.current.count) 
                     : 0}%
                 </p>
-                <p className="text-xs text-muted-foreground">Pitch <span className="text-primary/70">(30%)</span></p>
-              </div>
-              <div className="text-center p-3 bg-muted/30 rounded-lg">
-                <p className="text-xl font-semibold">
-                  {scoreAccumulatorRef.current.count > 0 
-                    ? Math.round(scoreAccumulatorRef.current.diction / scoreAccumulatorRef.current.count) 
-                    : 0}%
-                </p>
-                <p className="text-xs text-muted-foreground">Diction <span className="text-primary/70">(30%)</span></p>
-              </div>
-              <div className="text-center p-3 bg-muted/30 rounded-lg">
-                <p className="text-xl font-semibold">
-                  {scoreAccumulatorRef.current.count > 0 
-                    ? Math.round(scoreAccumulatorRef.current.technique / scoreAccumulatorRef.current.count) 
-                    : 0}%
-                </p>
-                <p className="text-xs text-muted-foreground">Technique <span className="text-primary/70">(20%)</span></p>
+                <p className="text-xs text-muted-foreground">Pitch <span className="text-primary/70">(40%)</span></p>
               </div>
               <div className="text-center p-3 bg-muted/30 rounded-lg">
                 <p className="text-xl font-semibold">
@@ -876,20 +845,17 @@ const Sing = () => {
                     ? Math.round(scoreAccumulatorRef.current.rhythm / scoreAccumulatorRef.current.count) 
                     : 0}%
                 </p>
-                <p className="text-xs text-muted-foreground">Rhythm <span className="text-primary/70">(20%)</span></p>
+                <p className="text-xs text-muted-foreground">Rhythm <span className="text-primary/70">(30%)</span></p>
+              </div>
+              <div className="text-center p-3 bg-muted/30 rounded-lg">
+                <p className="text-xl font-semibold">
+                  {scoreAccumulatorRef.current.count > 0 
+                    ? Math.round(scoreAccumulatorRef.current.technique / scoreAccumulatorRef.current.count) 
+                    : 0}%
+                </p>
+                <p className="text-xs text-muted-foreground">Technique <span className="text-primary/70">(30%)</span></p>
               </div>
             </div>
-            
-            {/* Deductions display */}
-            {scoreAccumulatorRef.current.count > 0 && 
-             Math.round(scoreAccumulatorRef.current.deductions / scoreAccumulatorRef.current.count) > 0 && (
-              <div className="text-center mb-6 p-2 bg-destructive/10 rounded-lg border border-destructive/30">
-                <p className="text-sm text-destructive">
-                  -{Math.round(scoreAccumulatorRef.current.deductions / scoreAccumulatorRef.current.count)}% Deductions
-                </p>
-                <p className="text-xs text-muted-foreground">Off-key noise or singing during breaks</p>
-              </div>
-            )}
             
             <div className="flex gap-4 justify-center">
               <Button variant="outline" size="lg" onClick={handleRestart}>
@@ -1010,20 +976,16 @@ const Sing = () => {
           {isMicActive && (
             <div className="hidden md:flex items-center gap-3 3xl:gap-5 4xl:gap-6">
               <div className="text-center">
-                <div className={`h-1 3xl:h-2 4xl:h-3 w-12 3xl:w-16 4xl:w-20 rounded-full ${getScoreColor(metrics.pitchAccuracy)}`} />
+                <div className={`h-1 3xl:h-2 4xl:h-3 w-12 3xl:w-16 4xl:w-20 rounded-full ${getScoreColor(metrics.pitchMatch)}`} />
                 <p className="text-xs 3xl:text-sm 4xl:text-base text-muted-foreground mt-1">Pitch</p>
               </div>
               <div className="text-center">
-                <div className={`h-1 3xl:h-2 4xl:h-3 w-12 3xl:w-16 4xl:w-20 rounded-full ${getScoreColor(metrics.diction)}`} />
-                <p className="text-xs 3xl:text-sm 4xl:text-base text-muted-foreground mt-1">Diction</p>
-              </div>
-              <div className="text-center">
-                <div className={`h-1 3xl:h-2 4xl:h-3 w-12 3xl:w-16 4xl:w-20 rounded-full ${getScoreColor(metrics.technique)}`} />
-                <p className="text-xs 3xl:text-sm 4xl:text-base text-muted-foreground mt-1">Technique</p>
-              </div>
-              <div className="text-center">
-                <div className={`h-1 3xl:h-2 4xl:h-3 w-12 3xl:w-16 4xl:w-20 rounded-full ${getScoreColor(metrics.rhythm)}`} />
+                <div className={`h-1 3xl:h-2 4xl:h-3 w-12 3xl:w-16 4xl:w-20 rounded-full ${getScoreColor(metrics.rhythmMatch)}`} />
                 <p className="text-xs 3xl:text-sm 4xl:text-base text-muted-foreground mt-1">Rhythm</p>
+              </div>
+              <div className="text-center">
+                <div className={`h-1 3xl:h-2 4xl:h-3 w-12 3xl:w-16 4xl:w-20 rounded-full ${getScoreColor(metrics.techniqueMatch)}`} />
+                <p className="text-xs 3xl:text-sm 4xl:text-base text-muted-foreground mt-1">Technique</p>
               </div>
             </div>
           )}
