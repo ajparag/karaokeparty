@@ -360,13 +360,15 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
           }
         }
         
-        // Calculate comparison metrics
-        let pitchMatch = 60;
-        let rhythmMatch = 60;
-        let techniqueMatch = 60;
-        
-        if (isVoiceDetected) {
-          if (referenceActive) {
+        // Only update scores when reference vocals are active (not instrumental section)
+        // During instrumental sections, keep the previous scores unchanged
+        setMetrics(prevMetrics => {
+          let pitchMatch = prevMetrics.pitchMatch;
+          let rhythmMatch = prevMetrics.rhythmMatch;
+          let techniqueMatch = prevMetrics.techniqueMatch;
+          
+          // Only update scores when vocals are present in the reference track
+          if (referenceActive && isVoiceDetected) {
             // Compare with reference vocals
             pitchMatch = comparePitch(userPitch, vocalsPitch);
             rhythmMatch = compareRhythm(userBeatTimesRef.current, vocalsBeatTimesRef.current);
@@ -376,25 +378,21 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
               userPitchHistoryRef.current,
               vocalsPitchHistoryRef.current
             );
-          } else {
-            // During instrumental sections, give base scores for singing
-            pitchMatch = 65;
-            rhythmMatch = 65;
-            techniqueMatch = 65;
           }
-        }
-        
-        const newMetrics: VocalsComparisonMetrics = {
-          pitchMatch,
-          rhythmMatch,
-          techniqueMatch,
-          volume: userVolume,
-          isVoiceDetected,
-          referenceActive,
-        };
-        
-        setMetrics(newMetrics);
-        options.onMetricsUpdate?.(newMetrics);
+          // If reference is not active (instrumental section), scores remain unchanged
+          
+          const newMetrics: VocalsComparisonMetrics = {
+            pitchMatch,
+            rhythmMatch,
+            techniqueMatch,
+            volume: userVolume,
+            isVoiceDetected,
+            referenceActive,
+          };
+          
+          options.onMetricsUpdate?.(newMetrics);
+          return newMetrics;
+        });
         
         animationFrameRef.current = requestAnimationFrame(analyze);
       };
