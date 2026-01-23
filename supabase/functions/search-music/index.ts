@@ -40,6 +40,167 @@ function decodeHtmlEntities(text: string): string {
     .replace(/&#x([0-9a-fA-F]+);/g, (_, code) => String.fromCharCode(parseInt(code, 16)));
 }
 
+// Common Hindi/English word mappings and synonyms for fuzzy matching
+const wordMappings: Record<string, string[]> = {
+  'tum': ['tum', 'tu', 'tujhe'],
+  'tu': ['tu', 'tum', 'tujhe'],
+  'dil': ['dil', 'dill', 'heart'],
+  'pyar': ['pyar', 'pyaar', 'love', 'mohabbat'],
+  'pyaar': ['pyaar', 'pyar', 'love', 'mohabbat'],
+  'ishq': ['ishq', 'ishk', 'love', 'pyar'],
+  'song': ['song', 'gana', 'gaana'],
+  'songs': ['songs', 'gane', 'gaane'],
+  'love': ['love', 'pyar', 'pyaar', 'ishq', 'mohabbat'],
+  'sad': ['sad', 'dard', 'dukh', 'udaas'],
+  'happy': ['happy', 'khushi', 'khush'],
+  'romantic': ['romantic', 'romance', 'pyar', 'love'],
+  'party': ['party', 'dance', 'club', 'dj'],
+  'old': ['old', 'purana', 'classic', 'retro'],
+  'new': ['new', 'naya', 'latest', 'recent'],
+  'bollywood': ['bollywood', 'hindi', 'filmi'],
+  'hindi': ['hindi', 'bollywood', 'indian'],
+  'arijit': ['arijit', 'arijit singh'],
+  'srk': ['srk', 'shah rukh khan', 'shahrukh'],
+  'shahrukh': ['shahrukh', 'shah rukh khan', 'srk'],
+  'salman': ['salman', 'salman khan', 'bhai'],
+  'aamir': ['aamir', 'aamir khan'],
+  'hit': ['hit', 'hits', 'popular', 'famous'],
+  'hits': ['hits', 'hit', 'popular', 'famous'],
+  'best': ['best', 'top', 'greatest', 'superhit'],
+  'top': ['top', 'best', 'hit', 'popular'],
+  '2024': ['2024', 'latest', 'new'],
+  '2023': ['2023', 'recent', 'new'],
+  'mashup': ['mashup', 'mix', 'remix'],
+  'remix': ['remix', 'mix', 'mashup'],
+  'unplugged': ['unplugged', 'acoustic', 'live'],
+  'acoustic': ['acoustic', 'unplugged'],
+  'cover': ['cover', 'version'],
+  'female': ['female', 'lady', 'woman'],
+  'male': ['male', 'man'],
+  'duet': ['duet', 'duo', 'couple'],
+};
+
+// Normalize query - fix common typos and standardize spelling
+function normalizeQuery(query: string): string {
+  let normalized = query.toLowerCase().trim();
+  
+  // Remove extra spaces
+  normalized = normalized.replace(/\s+/g, ' ');
+  
+  // Common typo fixes
+  const typoFixes: Record<string, string> = {
+    'arjit': 'arijit',
+    'arjith': 'arijit',
+    'arijith': 'arijit',
+    'shreya ghosal': 'shreya ghoshal',
+    'shreya goshal': 'shreya ghoshal',
+    'atif aslaam': 'atif aslam',
+    'neha kakar': 'neha kakkar',
+    'badsha': 'badshah',
+    'jubin nautiyal': 'jubin nautiyal',
+    'tanishk bagchi': 'tanishk bagchi',
+    'kesaria': 'kesariya',
+    'kesarya': 'kesariya',
+    'tum hi ho': 'tum hi ho',
+    'tumhi ho': 'tum hi ho',
+    'tumhiho': 'tum hi ho',
+    'gerua': 'gerua',
+    'channa mereya': 'channa mereya',
+    'channamereya': 'channa mereya',
+  };
+  
+  for (const [typo, fix] of Object.entries(typoFixes)) {
+    if (normalized.includes(typo)) {
+      normalized = normalized.replace(typo, fix);
+    }
+  }
+  
+  return normalized;
+}
+
+// Generate alternative search queries for better matching
+function generateAlternativeQueries(query: string): string[] {
+  const normalized = normalizeQuery(query);
+  const alternatives: Set<string> = new Set([normalized]);
+  
+  // Split into words
+  const words = normalized.split(' ');
+  
+  // Try expanding each word with its synonyms
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i];
+    const mappings = wordMappings[word];
+    if (mappings) {
+      for (const alt of mappings) {
+        if (alt !== word) {
+          const newQuery = [...words.slice(0, i), alt, ...words.slice(i + 1)].join(' ');
+          alternatives.add(newQuery);
+        }
+      }
+    }
+  }
+  
+  // If query has "songs" or "song", try without it
+  if (normalized.includes(' songs') || normalized.includes(' song')) {
+    alternatives.add(normalized.replace(/ songs?/g, ''));
+  }
+  
+  // If query is short, try adding common suffixes
+  if (words.length <= 2 && !normalized.includes('song')) {
+    alternatives.add(normalized + ' song');
+  }
+  
+  return Array.from(alternatives).slice(0, 3); // Limit to 3 alternatives
+}
+
+// Calculate fuzzy match score between query and track
+function calculateRelevanceScore(query: string, track: Track): number {
+  const queryLower = query.toLowerCase();
+  const titleLower = track.title.toLowerCase();
+  const artistLower = track.artist.toLowerCase();
+  
+  let score = 0;
+  
+  // Exact title match (highest priority)
+  if (titleLower === queryLower) {
+    score += 100;
+  } else if (titleLower.includes(queryLower)) {
+    score += 70;
+  } else if (queryLower.includes(titleLower)) {
+    score += 50;
+  }
+  
+  // Check individual words from query in title
+  const queryWords = queryLower.split(' ').filter(w => w.length > 1);
+  let matchedWords = 0;
+  for (const word of queryWords) {
+    if (titleLower.includes(word)) {
+      matchedWords++;
+      score += 15;
+    } else if (artistLower.includes(word)) {
+      matchedWords++;
+      score += 10;
+    }
+  }
+  
+  // Bonus for matching most words
+  if (queryWords.length > 0 && matchedWords / queryWords.length >= 0.5) {
+    score += 20;
+  }
+  
+  // Artist match
+  if (artistLower.includes(queryLower) || queryLower.includes(artistLower.split(',')[0])) {
+    score += 30;
+  }
+  
+  // Play count as tiebreaker (normalized to 0-10)
+  if (track.playCount) {
+    score += Math.min(10, Math.log10(track.playCount + 1));
+  }
+  
+  return score;
+}
+
 // JioSaavn API search
 async function searchSaavn(query: string): Promise<Track[]> {
   try {
@@ -105,13 +266,51 @@ async function searchSaavn(query: string): Promise<Track[]> {
       };
     });
 
-    // Keep original order from API (sorted by relevance)
-    console.log(`Found ${tracks.length} tracks from Saavn (sorted by relevance)`);
+    console.log(`Found ${tracks.length} tracks from Saavn`);
     return tracks;
   } catch (error) {
     console.error('Saavn search error:', error);
     return [];
   }
+}
+
+// Search with multiple queries and deduplicate/rank results
+async function searchWithFuzzyMatching(originalQuery: string): Promise<Track[]> {
+  const alternativeQueries = generateAlternativeQueries(originalQuery);
+  console.log('Searching with queries:', alternativeQueries);
+  
+  // Search with primary query first
+  let allTracks = await searchSaavn(alternativeQueries[0]);
+  
+  // If we got few results, try alternative queries
+  if (allTracks.length < 5 && alternativeQueries.length > 1) {
+    for (let i = 1; i < alternativeQueries.length; i++) {
+      const additionalTracks = await searchSaavn(alternativeQueries[i]);
+      allTracks = [...allTracks, ...additionalTracks];
+    }
+  }
+  
+  // Deduplicate by ID
+  const seen = new Set<string>();
+  const uniqueTracks: Track[] = [];
+  for (const track of allTracks) {
+    if (!seen.has(track.id)) {
+      seen.add(track.id);
+      uniqueTracks.push(track);
+    }
+  }
+  
+  // Score and sort by relevance to original query
+  const normalizedQuery = normalizeQuery(originalQuery);
+  const scoredTracks = uniqueTracks.map(track => ({
+    track,
+    score: calculateRelevanceScore(normalizedQuery, track)
+  }));
+  
+  scoredTracks.sort((a, b) => b.score - a.score);
+  
+  console.log(`Returning ${scoredTracks.length} unique tracks (sorted by relevance)`);
+  return scoredTracks.map(st => st.track).slice(0, 20);
 }
 
 serve(async (req) => {
@@ -158,9 +357,10 @@ serve(async (req) => {
       );
     }
 
-    console.log('Searching Saavn for:', trimmedQuery);
+    console.log('Original search query:', trimmedQuery);
     
-    const tracks = await searchSaavn(trimmedQuery);
+    // Use fuzzy matching search
+    const tracks = await searchWithFuzzyMatching(trimmedQuery);
     
     console.log(`Returning ${tracks.length} tracks`);
 
