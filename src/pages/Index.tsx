@@ -15,7 +15,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Mic, Music, Trophy, Sparkles, Loader2, Play, Search, Edit2, Check } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { useVocalSeparation, prefetchAudio } from "@/hooks/useVocalSeparation";
+import { useVocalSeparation, prefetchAudio, warmUpHFSpace } from "@/hooks/useVocalSeparation";
 
 interface Track {
   id: string;
@@ -140,6 +140,11 @@ const Index = () => {
       if (error) throw error;
 
       setTracks(data?.tracks || []);
+      
+      // Start warming up HF space when search results arrive
+      if (data?.tracks?.length > 0) {
+        warmUpHFSpace();
+      }
 
       if (data?.tracks?.length === 0) {
         toast({

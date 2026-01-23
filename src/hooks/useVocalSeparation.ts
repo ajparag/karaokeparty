@@ -12,8 +12,41 @@ interface SeparationResult {
 const audioPrefetchCache = new Map<string, { blob: Blob; timestamp: number }>();
 const PREFETCH_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
+// Track if HF space has been warmed up this session
+let hfSpaceWarmedUp = false;
+let hfWarmUpPromise: Promise<void> | null = null;
+
+// Warm up HuggingFace space proactively (non-blocking)
+export async function warmUpHFSpace(): Promise<void> {
+  if (hfSpaceWarmedUp || hfWarmUpPromise) {
+    return hfWarmUpPromise || Promise.resolve();
+  }
+
+  hfWarmUpPromise = (async () => {
+    try {
+      console.log('[VocalSeparation] Warming up HF space...');
+      const { data } = await supabase.functions.invoke('separate-vocals', {
+        body: { warmUp: true },
+      });
+      if (data?.ready) {
+        hfSpaceWarmedUp = true;
+        console.log('[VocalSeparation] HF space is warm and ready!');
+      }
+    } catch (err) {
+      console.warn('[VocalSeparation] HF warm-up failed (non-critical):', err);
+    } finally {
+      hfWarmUpPromise = null;
+    }
+  })();
+
+  return hfWarmUpPromise;
+}
+
 // Prefetch audio in background (called on track hover/click)
 export async function prefetchAudio(audioUrl: string): Promise<void> {
+  // Start warming up HF space in parallel
+  warmUpHFSpace();
+
   // Already prefetched recently?
   const cached = audioPrefetchCache.get(audioUrl);
   if (cached && Date.now() - cached.timestamp < PREFETCH_CACHE_TTL) {
@@ -49,6 +82,158 @@ async function getAudioBlob(audioUrl: string): Promise<Blob> {
   if (!response.ok) {
     throw new Error(`Failed to fetch audio: ${response.statusText}`);
   }
+  return response.blob();
+}
+
+// Compress audio using Web Audio API to reduce upload size
+async function compressAudio(audioBlob: Blob): Promise<Blob> {
+  try {
+    // Only compress if larger than 2MB
+    if (audioBlob.size < 2 * 1024 * 1024) {
+      console.log('[VocalSeparation] Audio small enough, skipping compression');
+      return audioBlob;
+    }
+
+    console.log('[VocalSeparation] Compressing audio...', Math.round(audioBlob.size / 1024), 'KB');
+    
+    // Create audio context
+    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+    
+    // Decode the audio
+    const arrayBuffer = await audioBlob.arrayBuffer();
+    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+    
+    // Calculate target sample rate (downsample to 22050 Hz for faster processing)
+    const targetSampleRate = Math.min(22050, audioBuffer.sampleRate);
+    
+    // Create offline context for resampling
+    const offlineContext = new OfflineAudioContext(
+      1, // Mono for smaller size
+      Math.ceil(audioBuffer.duration * targetSampleRate),
+      targetSampleRate
+    );
+    
+    // Create buffer source
+    const source = offlineContext.createBufferSource();
+    
+    // Mix down to mono if stereo
+    const monoBuffer = offlineContext.createBuffer(
+      1,
+      audioBuffer.length,
+      audioBuffer.sampleRate
+    );
+    const monoData = monoBuffer.getChannelData(0);
+    
+    if (audioBuffer.numberOfChannels === 2) {
+      const left = audioBuffer.getChannelData(0);
+      const right = audioBuffer.getChannelData(1);
+      for (let i = 0; i < monoData.length; i++) {
+        monoData[i] = (left[i] + right[i]) / 2;
+      }
+    } else {
+      monoData.set(audioBuffer.getChannelData(0));
+    }
+    
+    source.buffer = monoBuffer;
+    source.connect(offlineContext.destination);
+    source.start();
+    
+    // Render the resampled audio
+    const renderedBuffer = await offlineContext.startRendering();
+    
+    // Convert to WAV (simple, no complex encoding needed)
+    const wavBlob = audioBufferToWav(renderedBuffer);
+    
+    await audioContext.close();
+    
+    console.log('[VocalSeparation] Compressed to:', Math.round(wavBlob.size / 1024), 'KB',
+      `(${Math.round((1 - wavBlob.size / audioBlob.size) * 100)}% reduction)`);
+    
+    return wavBlob;
+  } catch (err) {
+    console.warn('[VocalSeparation] Compression failed, using original:', err);
+    return audioBlob;
+  }
+}
+
+// Convert AudioBuffer to WAV blob
+function audioBufferToWav(buffer: AudioBuffer): Blob {
+  const numChannels = buffer.numberOfChannels;
+  const sampleRate = buffer.sampleRate;
+  const format = 1; // PCM
+  const bitDepth = 16;
+  
+  const bytesPerSample = bitDepth / 8;
+  const blockAlign = numChannels * bytesPerSample;
+  
+  const samples = buffer.getChannelData(0);
+  const dataLength = samples.length * bytesPerSample;
+  const bufferLength = 44 + dataLength;
+  
+  const arrayBuffer = new ArrayBuffer(bufferLength);
+  const view = new DataView(arrayBuffer);
+  
+  // WAV header
+  writeString(view, 0, 'RIFF');
+  view.setUint32(4, bufferLength - 8, true);
+  writeString(view, 8, 'WAVE');
+  writeString(view, 12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, format, true);
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * blockAlign, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitDepth, true);
+  writeString(view, 36, 'data');
+  view.setUint32(40, dataLength, true);
+  
+  // Convert float samples to 16-bit PCM
+  let offset = 44;
+  for (let i = 0; i < samples.length; i++) {
+    const sample = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
+    offset += 2;
+  }
+  
+  return new Blob([arrayBuffer], { type: 'audio/wav' });
+}
+
+function writeString(view: DataView, offset: number, string: string) {
+  for (let i = 0; i < string.length; i++) {
+    view.setUint8(offset + i, string.charCodeAt(i));
+  }
+}
+
+// Download with streaming for faster first byte
+async function downloadWithStreaming(url: string): Promise<Blob> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to download: ${response.statusText}`);
+  }
+  
+  // Use streaming if available for progress tracking
+  if (response.body) {
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+    }
+    
+    const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+    const result = new Uint8Array(totalLength);
+    let offset = 0;
+    for (const chunk of chunks) {
+      result.set(chunk, offset);
+      offset += chunk.length;
+    }
+    
+    return new Blob([result]);
+  }
+  
   return response.blob();
 }
 
@@ -93,13 +278,18 @@ export function useVocalSeparation() {
 
       // Get audio blob (from prefetch cache or fresh download)
       const audioBlob = await getAudioBlob(audioUrl);
-      setProgress(`Processing audio (${Math.round(audioBlob.size / 1024)}KB)...`);
+      
+      // Compress audio for faster upload
+      setProgress('Optimizing audio...');
+      const compressedBlob = await compressAudio(audioBlob);
+      
+      setProgress(`Processing audio (${Math.round(compressedBlob.size / 1024)}KB)...`);
 
       // Use FormData for streaming upload (no base64 overhead!)
       const formData = new FormData();
-      formData.append('audio', audioBlob, 'audio.mp4');
+      formData.append('audio', compressedBlob, compressedBlob.type === 'audio/wav' ? 'audio.wav' : 'audio.mp4');
       
-      setProgress('AI vocal separation (1-2 min)...');
+      setProgress('AI vocal separation...');
       
       // Call edge function with FormData (streaming)
       const { data, error: fnError } = await supabase.functions.invoke('separate-vocals', {
@@ -116,20 +306,10 @@ export function useVocalSeparation() {
 
       setProgress('Downloading tracks...');
 
-      // Download instrumental and vocals in parallel for faster availability
-      const [instrumentalResponse, vocalsResponse] = await Promise.all([
-        fetch(data.instrumentalUrl),
-        data.vocalsUrl ? fetch(data.vocalsUrl) : Promise.resolve(null),
-      ]);
-
-      if (!instrumentalResponse.ok) {
-        throw new Error('Failed to download instrumental track');
-      }
-
-      // Get blobs in parallel
+      // Download instrumental and vocals in parallel with streaming
       const [instrumentalBlob, vocalsBlob] = await Promise.all([
-        instrumentalResponse.blob(),
-        vocalsResponse?.ok ? vocalsResponse.blob() : Promise.resolve(undefined),
+        downloadWithStreaming(data.instrumentalUrl),
+        data.vocalsUrl ? downloadWithStreaming(data.vocalsUrl) : Promise.resolve(undefined),
       ]);
 
       // Create object URLs immediately for playback

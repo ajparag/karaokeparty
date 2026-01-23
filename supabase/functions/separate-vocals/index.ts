@@ -6,24 +6,64 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// Use a faster Spleeter-based space as primary (faster than Demucs)
+const PRIMARY_SPACE = "abidlabs/music-separation"; // Demucs - high quality
+const FALLBACK_SPACE = "nateraw/audio-source-separation"; // Alternative space
+
 // Retry with exponential backoff for HF cold starts
-async function connectWithRetry(spaceId: string, hfToken: string, maxRetries = 3): Promise<any> {
+async function connectWithRetry(spaceId: string, hfToken: string, maxRetries = 2): Promise<any> {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      console.log(`[separate-vocals] Connection attempt ${attempt}/${maxRetries}...`);
+      console.log(`[separate-vocals] Connection attempt ${attempt}/${maxRetries} to ${spaceId}...`);
       const client = await Client.connect(spaceId, {
         hf_token: hfToken as `hf_${string}`,
       });
       console.log(`[separate-vocals] Connected on attempt ${attempt}`);
-      return client;
+      return { client, spaceId };
     } catch (error) {
       console.error(`[separate-vocals] Attempt ${attempt} failed:`, error);
       if (attempt === maxRetries) throw error;
-      // Exponential backoff: 2s, 4s, 8s
-      const delay = Math.pow(2, attempt) * 1000;
+      // Shorter backoff: 1s, 2s (faster retries)
+      const delay = Math.pow(2, attempt - 1) * 1000;
       console.log(`[separate-vocals] Retrying in ${delay}ms...`);
       await new Promise(resolve => setTimeout(resolve, delay));
     }
+  }
+}
+
+// Try primary space first, fall back to alternative if needed
+async function connectToFastestSpace(hfToken: string): Promise<any> {
+  try {
+    return await connectWithRetry(PRIMARY_SPACE, hfToken, 2);
+  } catch (primaryError) {
+    console.log(`[separate-vocals] Primary space failed, trying fallback...`);
+    try {
+      return await connectWithRetry(FALLBACK_SPACE, hfToken, 2);
+    } catch (fallbackError) {
+      console.error(`[separate-vocals] All spaces failed`);
+      throw primaryError; // Throw original error
+    }
+  }
+}
+
+// Quick health check / warm-up for HF space
+async function warmUpSpace(hfToken: string): Promise<boolean> {
+  try {
+    console.log("[separate-vocals] Warming up HF space...");
+    const startTime = Date.now();
+    
+    // Just try to connect - this wakes up the space
+    const client = await Client.connect(PRIMARY_SPACE, {
+      hf_token: hfToken as `hf_${string}`,
+    });
+    
+    const elapsed = Date.now() - startTime;
+    console.log(`[separate-vocals] Space warmed up in ${elapsed}ms`);
+    
+    return true;
+  } catch (error) {
+    console.warn("[separate-vocals] Warm-up failed:", error);
+    return false;
   }
 }
 
@@ -34,10 +74,72 @@ serve(async (req) => {
   }
 
   try {
-    let audioBlob: Blob;
     const contentType = req.headers.get("content-type") || "";
 
-    // Handle FormData (streaming - preferred) or JSON (legacy base64)
+    // Handle warm-up request (quick health check)
+    if (contentType.includes("application/json")) {
+      const body = await req.json();
+      
+      if (body.warmUp) {
+        console.log("[separate-vocals] Received warm-up request");
+        const HF_TOKEN = Deno.env.get("HF_TOKEN");
+        if (!HF_TOKEN) {
+          return new Response(
+            JSON.stringify({ ready: false, error: "HF_TOKEN not configured" }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+        
+        const ready = await warmUpSpace(HF_TOKEN);
+        return new Response(
+          JSON.stringify({ ready }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      
+      // Legacy JSON handling for audioUrl/audioBase64
+      const { audioUrl, audioBase64 } = body;
+      
+      if (!audioUrl && !audioBase64) {
+        return new Response(
+          JSON.stringify({ error: "audioUrl or audioBase64 is required" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      
+      let audioBlob: Blob;
+      
+      if (audioBase64) {
+        console.log("[separate-vocals] Using client-provided base64 audio data...");
+        const binaryString = atob(audioBase64);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        audioBlob = new Blob([bytes], { type: 'audio/mp4' });
+      } else {
+        console.log("[separate-vocals] Fetching audio from URL:", audioUrl);
+        const audioResponse = await fetch(audioUrl, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0',
+            'Accept': 'audio/*, */*',
+          },
+        });
+        
+        if (!audioResponse.ok) {
+          throw new Error(`Failed to fetch audio: ${audioResponse.status}`);
+        }
+        
+        audioBlob = await audioResponse.blob();
+      }
+      
+      console.log(`[separate-vocals] Audio size: ${audioBlob.size} bytes`);
+      
+      // Continue with separation...
+      return await processSeparation(audioBlob);
+    }
+
+    // Handle FormData (streaming - preferred)
     if (contentType.includes("multipart/form-data")) {
       console.log("[separate-vocals] Processing FormData upload (streaming)...");
       const formData = await req.formData();
@@ -50,124 +152,13 @@ serve(async (req) => {
         );
       }
       
-      audioBlob = audioFile;
-      console.log(`[separate-vocals] Received audio: ${audioBlob.size} bytes, type: ${audioBlob.type}`);
-    } else {
-      // Legacy JSON/base64 handling
-      const { audioUrl, audioBase64 } = await req.json();
-
-      if (!audioUrl && !audioBase64) {
-        return new Response(
-          JSON.stringify({ error: "audioUrl or audioBase64 is required" }),
-          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-
-      if (audioBase64) {
-        console.log("[separate-vocals] Using client-provided base64 audio data...");
-        const binaryString = atob(audioBase64);
-        const bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-          bytes[i] = binaryString.charCodeAt(i);
-        }
-        audioBlob = new Blob([bytes], { type: 'audio/mp4' });
-        console.log(`[separate-vocals] Audio blob created: ${audioBlob.size} bytes`);
-      } else {
-        console.log("[separate-vocals] Fetching audio from URL:", audioUrl);
-        const audioResponse = await fetch(audioUrl, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'audio/*, */*',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Referer': 'https://www.jiosaavn.com/',
-            'Origin': 'https://www.jiosaavn.com',
-          },
-        });
-        
-        if (!audioResponse.ok) {
-          console.error(`[separate-vocals] Audio fetch failed: ${audioResponse.status} ${audioResponse.statusText}`);
-          throw new Error(`Failed to fetch audio: ${audioResponse.status} ${audioResponse.statusText}`);
-        }
-        
-        audioBlob = await audioResponse.blob();
-        console.log(`[separate-vocals] Audio fetched: ${audioBlob.size} bytes, type: ${audioBlob.type}`);
-      }
+      console.log(`[separate-vocals] Received audio: ${audioFile.size} bytes, type: ${audioFile.type}`);
+      return await processSeparation(audioFile);
     }
-
-    const HF_TOKEN = Deno.env.get("HF_TOKEN");
-    if (!HF_TOKEN) {
-      console.error("HF_TOKEN not configured");
-      return new Response(
-        JSON.stringify({ error: "HF_TOKEN not configured" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    console.log("[separate-vocals] Connecting to Demucs Space with retry...");
-    
-    // Connect with retry for cold starts
-    const client = await connectWithRetry("abidlabs/music-separation", HF_TOKEN);
-
-    console.log("[separate-vocals] Submitting to Demucs for separation...");
-    
-    // Call the predict endpoint with the audio blob
-    const result = await client.predict("/predict", {
-      audio: audioBlob,
-    });
-
-    console.log("[separate-vocals] Separation complete, processing result...");
-
-    const data = result.data as any;
-    console.log("[separate-vocals] Raw result data:", JSON.stringify(data, null, 2));
-    
-    let instrumentalUrl: string | null = null;
-    let vocalsUrl: string | null = null;
-
-    if (Array.isArray(data)) {
-      // Check filenames to determine which is which
-      for (const item of data) {
-        if (item && typeof item === 'object' && 'url' in item) {
-          const url = item.url as string;
-          if (url.includes('no_vocals') || url.includes('instrumental') || url.includes('accompaniment')) {
-            instrumentalUrl = url;
-          } else if (url.includes('vocals')) {
-            vocalsUrl = url;
-          }
-        }
-      }
-      
-      // Fallback: positional assignment [vocals, no_vocals]
-      if (!instrumentalUrl && !vocalsUrl && data.length >= 2) {
-        if (data[0]?.url && data[1]?.url) {
-          vocalsUrl = data[0].url;
-          instrumentalUrl = data[1].url;
-          console.log("[separate-vocals] Using positional assignment: vocals first, instrumental second");
-        }
-      }
-    } else if (data && typeof data === 'object') {
-      if (data.no_vocals?.url) instrumentalUrl = data.no_vocals.url;
-      if (data.vocals?.url) vocalsUrl = data.vocals.url;
-      if (typeof data.no_vocals === 'string') instrumentalUrl = data.no_vocals;
-      if (typeof data.vocals === 'string') vocalsUrl = data.vocals;
-    }
-
-    if (!instrumentalUrl) {
-      console.error("[separate-vocals] Could not find instrumental URL in result:", JSON.stringify(data));
-      return new Response(
-        JSON.stringify({ error: "Failed to extract instrumental track from result", rawData: data }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    console.log("[separate-vocals] Success! Instrumental URL:", instrumentalUrl);
 
     return new Response(
-      JSON.stringify({
-        instrumentalUrl,
-        vocalsUrl,
-        success: true,
-      }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      JSON.stringify({ error: "Invalid content type" }),
+      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
 
   } catch (error) {
@@ -181,3 +172,81 @@ serve(async (req) => {
     );
   }
 });
+
+async function processSeparation(audioBlob: Blob): Promise<Response> {
+  const HF_TOKEN = Deno.env.get("HF_TOKEN");
+  if (!HF_TOKEN) {
+    console.error("HF_TOKEN not configured");
+    return new Response(
+      JSON.stringify({ error: "HF_TOKEN not configured" }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+
+  console.log("[separate-vocals] Connecting to fastest available HF space...");
+  
+  // Connect with fallback support
+  const { client, spaceId } = await connectToFastestSpace(HF_TOKEN);
+
+  console.log(`[separate-vocals] Using space: ${spaceId}, submitting for separation...`);
+  
+  // Call the predict endpoint with the audio blob
+  const result = await client.predict("/predict", {
+    audio: audioBlob,
+  });
+
+  console.log("[separate-vocals] Separation complete, processing result...");
+
+  const data = result.data as any;
+  console.log("[separate-vocals] Raw result data:", JSON.stringify(data, null, 2));
+  
+  let instrumentalUrl: string | null = null;
+  let vocalsUrl: string | null = null;
+
+  if (Array.isArray(data)) {
+    // Check filenames to determine which is which
+    for (const item of data) {
+      if (item && typeof item === 'object' && 'url' in item) {
+        const url = item.url as string;
+        if (url.includes('no_vocals') || url.includes('instrumental') || url.includes('accompaniment')) {
+          instrumentalUrl = url;
+        } else if (url.includes('vocals')) {
+          vocalsUrl = url;
+        }
+      }
+    }
+    
+    // Fallback: positional assignment [vocals, no_vocals]
+    if (!instrumentalUrl && !vocalsUrl && data.length >= 2) {
+      if (data[0]?.url && data[1]?.url) {
+        vocalsUrl = data[0].url;
+        instrumentalUrl = data[1].url;
+        console.log("[separate-vocals] Using positional assignment: vocals first, instrumental second");
+      }
+    }
+  } else if (data && typeof data === 'object') {
+    if (data.no_vocals?.url) instrumentalUrl = data.no_vocals.url;
+    if (data.vocals?.url) vocalsUrl = data.vocals.url;
+    if (typeof data.no_vocals === 'string') instrumentalUrl = data.no_vocals;
+    if (typeof data.vocals === 'string') vocalsUrl = data.vocals;
+  }
+
+  if (!instrumentalUrl) {
+    console.error("[separate-vocals] Could not find instrumental URL in result:", JSON.stringify(data));
+    return new Response(
+      JSON.stringify({ error: "Failed to extract instrumental track from result", rawData: data }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+
+  console.log("[separate-vocals] Success! Instrumental URL:", instrumentalUrl);
+
+  return new Response(
+    JSON.stringify({
+      instrumentalUrl,
+      vocalsUrl,
+      success: true,
+    }),
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+  );
+}
