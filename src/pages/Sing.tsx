@@ -117,7 +117,8 @@ const Sing = () => {
     isPlaying,
   });
 
-  // Vocals ON/OFF toggle (plays vocals at 50% volume when ON)
+  // Vocals volume control (0-100, default 30%)
+  const [vocalsVolume, setVocalsVolume] = useState(30);
   const [vocalsEnabled, setVocalsEnabled] = useState(true);
 
   // Load track and pre-fetched lyrics from session storage
@@ -280,7 +281,7 @@ const Sing = () => {
     vocalsAudio.crossOrigin = "anonymous";
     vocalsAudio.src = separatedAudio.vocalsUrl;
     vocalsAudio.preload = "auto";
-    vocalsAudio.volume = 0.3; // 30% volume
+    vocalsAudio.volume = 0.3; // Initial 30% volume (user can adjust)
     vocalsAudioRef.current = vocalsAudio;
 
     return () => {
@@ -328,15 +329,15 @@ const Sing = () => {
     }
   }, [volume, isMuted]);
 
-  // Vocals volume is independent - 40% of master, and controlled by vocalsEnabled
+  // Vocals volume is independent and user-controllable
   useEffect(() => {
     if (vocalsAudioRef.current) {
-      // Vocals at 30% of the master volume, but only if enabled
-      const vocalsVolume = vocalsEnabled ? (volume / 100) * 0.3 : 0;
-      vocalsAudioRef.current.volume = isMuted ? 0 : vocalsVolume;
+      // Use user-defined vocalsVolume percentage
+      const effectiveVocalsVolume = vocalsEnabled ? (volume / 100) * (vocalsVolume / 100) : 0;
+      vocalsAudioRef.current.volume = isMuted ? 0 : effectiveVocalsVolume;
       vocalsAudioRef.current.muted = isMuted || !vocalsEnabled;
     }
-  }, [volume, isMuted, vocalsEnabled]);
+  }, [volume, isMuted, vocalsEnabled, vocalsVolume]);
 
   // Accumulate score from live metrics while audio is playing.
   // Uses interval-based sampling for reliable updates at ~5Hz.
@@ -776,20 +777,32 @@ const Sing = () => {
           </DialogContent>
         </Dialog>
 
-        {/* Vocals ON/OFF Toggle - only show when separation is complete */}
+        {/* Vocals Volume Control - only show when separation is complete */}
         {separatedAudio && (
-          <Button 
-            variant={vocalsEnabled ? "default" : "outline"} 
-            size="sm"
-            onClick={toggleVocals}
-            className={`shrink-0 gap-1.5 ${vocalsEnabled ? 'bg-primary hover:bg-primary/90' : ''}`}
-            title={vocalsEnabled ? 'Vocals playing at 80%' : 'Enable vocals (80% volume)'}
-          >
-            <VocalsIcon className="w-4 h-4" isActive={vocalsEnabled} />
-            <span className="hidden sm:inline">
-              {vocalsEnabled ? 'Vocals On' : 'Vocals Off'}
-            </span>
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button 
+              variant={vocalsEnabled ? "default" : "outline"} 
+              size="sm"
+              onClick={toggleVocals}
+              className={`shrink-0 gap-1.5 ${vocalsEnabled ? 'bg-primary hover:bg-primary/90' : ''}`}
+              title={vocalsEnabled ? `Vocals at ${vocalsVolume}%` : 'Enable vocals'}
+            >
+              <VocalsIcon className="w-4 h-4" isActive={vocalsEnabled} />
+              <span className="hidden sm:inline">
+                {vocalsEnabled ? 'Vocals' : 'Vocals Off'}
+              </span>
+            </Button>
+            {vocalsEnabled && (
+              <Slider
+                value={[vocalsVolume]}
+                onValueChange={(v) => setVocalsVolume(v[0])}
+                max={100}
+                min={0}
+                step={5}
+                className="w-20 sm:w-24"
+              />
+            )}
+          </div>
         )}
         
         {/* Volume Control */}
