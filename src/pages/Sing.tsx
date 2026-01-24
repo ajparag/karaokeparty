@@ -280,7 +280,7 @@ const Sing = () => {
     vocalsAudio.crossOrigin = "anonymous";
     vocalsAudio.src = separatedAudio.vocalsUrl;
     vocalsAudio.preload = "auto";
-    vocalsAudio.volume = 0.4; // 40% volume
+    vocalsAudio.volume = 0.3; // 30% volume
     vocalsAudioRef.current = vocalsAudio;
 
     return () => {
@@ -331,8 +331,8 @@ const Sing = () => {
   // Vocals volume is independent - 40% of master, and controlled by vocalsEnabled
   useEffect(() => {
     if (vocalsAudioRef.current) {
-      // Vocals at 40% of the master volume, but only if enabled
-      const vocalsVolume = vocalsEnabled ? (volume / 100) * 0.4 : 0;
+      // Vocals at 30% of the master volume, but only if enabled
+      const vocalsVolume = vocalsEnabled ? (volume / 100) * 0.3 : 0;
       vocalsAudioRef.current.volume = isMuted ? 0 : vocalsVolume;
       vocalsAudioRef.current.muted = isMuted || !vocalsEnabled;
     }
