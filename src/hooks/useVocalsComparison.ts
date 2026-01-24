@@ -368,18 +368,25 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
           let techniqueMatch = prevMetrics.techniqueMatch;
           
           // Only update scores when vocals are present in the reference track
-          if (referenceActive && isVoiceDetected) {
-            // Compare with reference vocals
-            pitchMatch = comparePitch(userPitch, vocalsPitch);
-            rhythmMatch = compareRhythm(userBeatTimesRef.current, vocalsBeatTimesRef.current);
-            techniqueMatch = compareTechnique(
-              userVolumeHistoryRef.current,
-              vocalsVolumeHistoryRef.current,
-              userPitchHistoryRef.current,
-              vocalsPitchHistoryRef.current
-            );
+          if (referenceActive) {
+            if (isVoiceDetected) {
+              // User is singing - compare with reference vocals
+              pitchMatch = comparePitch(userPitch, vocalsPitch);
+              rhythmMatch = compareRhythm(userBeatTimesRef.current, vocalsBeatTimesRef.current);
+              techniqueMatch = compareTechnique(
+                userVolumeHistoryRef.current,
+                vocalsVolumeHistoryRef.current,
+                userPitchHistoryRef.current,
+                vocalsPitchHistoryRef.current
+              );
+            } else {
+              // User is silent during vocal section - penalize with low scores
+              // Gradually reduce scores to indicate missed vocals
+              pitchMatch = Math.max(0, prevMetrics.pitchMatch * 0.85 - 5);
+              rhythmMatch = Math.max(0, prevMetrics.rhythmMatch * 0.85 - 5);
+              techniqueMatch = Math.max(0, prevMetrics.techniqueMatch * 0.85 - 5);
+            }
           }
-          // If reference is not active (instrumental section), scores remain unchanged
           
           const newMetrics: VocalsComparisonMetrics = {
             pitchMatch,
