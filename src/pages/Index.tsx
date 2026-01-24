@@ -126,15 +126,15 @@ const Index = () => {
     fetchTrending();
   }, []);
 
-  const handleSearch = async () => {
-    if (!query.trim()) return;
+  const searchWithQuery = async (searchQuery: string) => {
+    if (!searchQuery.trim()) return;
 
     setIsLoading(true);
     setHasSearched(true);
 
     try {
       const { data, error } = await supabase.functions.invoke("search-music", {
-        body: { query: query.trim() },
+        body: { query: searchQuery.trim() },
       });
 
       if (error) throw error;
@@ -163,6 +163,10 @@ const Index = () => {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleSearch = () => {
+    searchWithQuery(query);
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -367,7 +371,8 @@ const Index = () => {
                       size="sm"
                       onClick={() => {
                         setQuery(term);
-                        setTimeout(() => handleSearch(), 100);
+                        // Search directly with the term instead of relying on stale state
+                        searchWithQuery(term);
                       }}
                       className="border-border hover:bg-muted text-xs"
                     >
