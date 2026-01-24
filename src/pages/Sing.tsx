@@ -290,29 +290,35 @@ const Sing = () => {
     };
   }, [separatedAudio?.vocalsUrl]);
 
-  // Sync vocals audio with main audio
+  // Sync vocals audio with main audio - only on play/pause state changes
   useEffect(() => {
     const vocalsAudio = vocalsAudioRef.current;
+    const mainAudio = audioRef.current;
     if (!vocalsAudio || !separatedAudio?.vocalsUrl) return;
 
     if (isPlaying && vocalsEnabled) {
-      vocalsAudio.currentTime = currentTime;
+      // Sync time before playing
+      if (mainAudio) {
+        vocalsAudio.currentTime = mainAudio.currentTime;
+      }
       vocalsAudio.play().catch(console.error);
     } else {
       vocalsAudio.pause();
     }
   }, [isPlaying, vocalsEnabled, separatedAudio?.vocalsUrl]);
 
-  // Sync vocals audio time when main audio seeks
-  useEffect(() => {
-    const vocalsAudio = vocalsAudioRef.current;
-    if (!vocalsAudio) return;
-    
-    // Only sync if difference is significant (>0.5s)
-    if (Math.abs(vocalsAudio.currentTime - currentTime) > 0.5) {
-      vocalsAudio.currentTime = currentTime;
+  // Sync vocals audio time when user seeks (via click on progress bar)
+  const lastSeekTimeRef = useRef<number>(0);
+  const handleSeek = useCallback((newTime: number) => {
+    lastSeekTimeRef.current = newTime;
+    if (audioRef.current) {
+      audioRef.current.currentTime = newTime;
     }
-  }, [currentTime]);
+    if (vocalsAudioRef.current) {
+      vocalsAudioRef.current.currentTime = newTime;
+    }
+    setCurrentTime(newTime);
+  }, []);
 
   // Update volume/mute when changed - instrumental always plays, vocals only when enabled
   useEffect(() => {
@@ -1025,18 +1031,12 @@ const Sing = () => {
               const rect = e.currentTarget.getBoundingClientRect();
               const percent = (e.clientX - rect.left) / rect.width;
               const newTime = percent * duration;
-              if (audioRef.current) {
-                audioRef.current.currentTime = newTime;
-              }
-              if (vocalsAudioRef.current) {
-                vocalsAudioRef.current.currentTime = newTime;
-              }
-              setCurrentTime(newTime);
+              handleSeek(newTime);
             }}
           >
             <div
-              className="h-full bg-primary rounded-full transition-all"
-              style={{ width: `${(currentTime / duration) * 100}%` }}
+              className="h-full bg-primary rounded-full transition-none"
+              style={{ width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
             />
           </div>
           <div className="flex justify-between text-[10px] md:text-xs 3xl:text-sm 4xl:text-base text-muted-foreground mt-0.5 md:mt-1">
