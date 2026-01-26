@@ -31,7 +31,7 @@ export function Navbar() {
             <div className="flex h-10 w-10 items-center justify-center rounded-xl gradient-primary shadow-glow">
               <Mic className="h-5 w-5 text-primary-foreground" />
             </div>
-            <span className="font-display text-xl font-bold text-gradient">VoiceScore</span>
+            <span className="font-display text-xl font-bold text-gradient">Karaoke Party</span>
           </Link>
 
           <div className="hidden items-center gap-1 md:flex">
