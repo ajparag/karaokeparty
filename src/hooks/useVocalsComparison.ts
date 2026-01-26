@@ -386,11 +386,11 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
                 vocalsPitchHistoryRef.current
               );
             } else {
-              // User is silent during vocal section - penalize with low scores
-              // Gradually reduce scores to indicate missed vocals
-              pitchMatch = Math.max(0, prevMetrics.pitchMatch * 0.85 - 5);
-              rhythmMatch = Math.max(0, prevMetrics.rhythmMatch * 0.85 - 5);
-              techniqueMatch = Math.max(0, prevMetrics.techniqueMatch * 0.85 - 5);
+              // User is silent during vocal section - gentle penalty
+              // Mild decay to indicate missed vocals without being too harsh
+              pitchMatch = Math.max(30, prevMetrics.pitchMatch * 0.95 - 2);
+              rhythmMatch = Math.max(30, prevMetrics.rhythmMatch * 0.95 - 2);
+              techniqueMatch = Math.max(30, prevMetrics.techniqueMatch * 0.95 - 2);
             }
           }
           
