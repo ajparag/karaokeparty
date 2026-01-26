@@ -111,7 +111,7 @@ export default function Auth() {
           <div className="flex h-16 w-16 items-center justify-center rounded-2xl gradient-primary shadow-glow">
             <Mic className="h-8 w-8 text-primary-foreground" />
           </div>
-          <h1 className="font-display text-3xl font-bold text-gradient">VoiceScore</h1>
+          <h1 className="font-display text-3xl font-bold text-gradient">Karaoke Party</h1>
           <p className="text-muted-foreground text-center">
             Sign in to track your scores and compete on the leaderboard
           </p>
