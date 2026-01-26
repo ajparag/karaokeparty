@@ -6,9 +6,9 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// Use a faster Spleeter-based space as primary (faster than Demucs)
-const PRIMARY_SPACE = "abidlabs/music-separation"; // Demucs - high quality
-const FALLBACK_SPACE = "nateraw/audio-source-separation"; // Alternative space
+// Use Spleeter-based spaces for faster processing (~10-15s vs Demucs ~30-60s)
+const PRIMARY_SPACE = "Anjali1241/spleeter_colab"; // Spleeter - faster, good quality
+const FALLBACK_SPACE = "abidlabs/music-separation"; // Demucs - slower but higher quality fallback
 
 // Retry with exponential backoff for HF cold starts
 async function connectWithRetry(spaceId: string, hfToken: string, maxRetries = 2): Promise<any> {
@@ -203,32 +203,55 @@ async function processSeparation(audioBlob: Blob): Promise<Response> {
   let instrumentalUrl: string | null = null;
   let vocalsUrl: string | null = null;
 
+  // Parse result - handle various HF space output formats
   if (Array.isArray(data)) {
     // Check filenames to determine which is which
     for (const item of data) {
       if (item && typeof item === 'object' && 'url' in item) {
         const url = item.url as string;
-        if (url.includes('no_vocals') || url.includes('instrumental') || url.includes('accompaniment')) {
+        const urlLower = url.toLowerCase();
+        if (urlLower.includes('no_vocals') || urlLower.includes('instrumental') || 
+            urlLower.includes('accompaniment') || urlLower.includes('music')) {
           instrumentalUrl = url;
-        } else if (url.includes('vocals')) {
+        } else if (urlLower.includes('vocals') || urlLower.includes('voice')) {
           vocalsUrl = url;
+        }
+      } else if (typeof item === 'string') {
+        // Direct URL strings
+        const urlLower = item.toLowerCase();
+        if (urlLower.includes('no_vocals') || urlLower.includes('instrumental') || 
+            urlLower.includes('accompaniment') || urlLower.includes('music')) {
+          instrumentalUrl = item;
+        } else if (urlLower.includes('vocals') || urlLower.includes('voice')) {
+          vocalsUrl = item;
         }
       }
     }
     
-    // Fallback: positional assignment [vocals, no_vocals]
+    // Fallback: positional assignment [vocals, no_vocals] or [accompaniment, vocals]
     if (!instrumentalUrl && !vocalsUrl && data.length >= 2) {
-      if (data[0]?.url && data[1]?.url) {
-        vocalsUrl = data[0].url;
-        instrumentalUrl = data[1].url;
+      const getUrl = (item: any) => typeof item === 'string' ? item : item?.url;
+      const url0 = getUrl(data[0]);
+      const url1 = getUrl(data[1]);
+      
+      if (url0 && url1) {
+        // Common convention: first is vocals, second is instrumental
+        vocalsUrl = url0;
+        instrumentalUrl = url1;
         console.log("[separate-vocals] Using positional assignment: vocals first, instrumental second");
       }
     }
   } else if (data && typeof data === 'object') {
+    // Object format with named keys
     if (data.no_vocals?.url) instrumentalUrl = data.no_vocals.url;
+    else if (typeof data.no_vocals === 'string') instrumentalUrl = data.no_vocals;
+    else if (data.instrumental?.url) instrumentalUrl = data.instrumental.url;
+    else if (typeof data.instrumental === 'string') instrumentalUrl = data.instrumental;
+    else if (data.accompaniment?.url) instrumentalUrl = data.accompaniment.url;
+    else if (typeof data.accompaniment === 'string') instrumentalUrl = data.accompaniment;
+    
     if (data.vocals?.url) vocalsUrl = data.vocals.url;
-    if (typeof data.no_vocals === 'string') instrumentalUrl = data.no_vocals;
-    if (typeof data.vocals === 'string') vocalsUrl = data.vocals;
+    else if (typeof data.vocals === 'string') vocalsUrl = data.vocals;
   }
 
   if (!instrumentalUrl) {
