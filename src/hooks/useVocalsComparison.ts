@@ -82,34 +82,35 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
     return Math.sqrt(sum / timeData.length);
   }, []);
 
-  // Lenient pitch comparison (within tolerance = good score)
+  // Generous pitch comparison - rewards singing with higher base scores
   const comparePitch = useCallback((userPitch: number, vocalsPitch: number): number => {
-    if (userPitch === 0 || vocalsPitch === 0) return 50; // Base score when no detection
+    if (userPitch === 0 || vocalsPitch === 0) return 70; // Higher base score when no detection
     
     // Calculate pitch ratio (how close they are)
     const ratio = Math.min(userPitch, vocalsPitch) / Math.max(userPitch, vocalsPitch);
     
-    // Very lenient scoring:
-    // - Within 10% (ratio > 0.90) = 85-100 points
-    // - Within 20% (ratio > 0.80) = 70-85 points  
-    // - Within 35% (ratio > 0.65) = 55-70 points
-    // - Beyond that = 40-55 points
+    // More generous scoring:
+    // - Within 5% (ratio > 0.95) = 95-100 points
+    // - Within 15% (ratio > 0.85) = 85-95 points
+    // - Within 25% (ratio > 0.75) = 75-85 points  
+    // - Within 40% (ratio > 0.60) = 65-75 points
+    // - Beyond that = 55-65 points
     if (ratio > 0.95) {
       return 95 + (ratio - 0.95) * 100; // 95-100
-    } else if (ratio > 0.90) {
-      return 85 + (ratio - 0.90) * 200; // 85-95
-    } else if (ratio > 0.80) {
-      return 70 + (ratio - 0.80) * 150; // 70-85
-    } else if (ratio > 0.65) {
-      return 55 + (ratio - 0.65) * 100; // 55-70
+    } else if (ratio > 0.85) {
+      return 85 + (ratio - 0.85) * 100; // 85-95
+    } else if (ratio > 0.75) {
+      return 75 + (ratio - 0.75) * 100; // 75-85
+    } else if (ratio > 0.60) {
+      return 65 + (ratio - 0.60) * 67; // 65-75
     } else {
-      return 40 + ratio * 23; // 40-55
+      return 55 + ratio * 17; // 55-65
     }
   }, []);
 
-  // Lenient rhythm comparison  
+  // Generous rhythm comparison - higher base and rewards any rhythmic activity
   const compareRhythm = useCallback((userBeats: number[], vocalsBeats: number[]): number => {
-    if (userBeats.length < 2 || vocalsBeats.length < 2) return 60; // Base score
+    if (userBeats.length < 2 || vocalsBeats.length < 2) return 75; // Higher base score
     
     // Calculate average beat intervals
     const getUserAvgInterval = () => {
@@ -131,34 +132,35 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
     const userInterval = getUserAvgInterval();
     const vocalsInterval = getVocalsAvgInterval();
     
-    if (userInterval === 0 || vocalsInterval === 0) return 60;
+    if (userInterval === 0 || vocalsInterval === 0) return 75;
     
-    // Compare intervals (lenient)
+    // Compare intervals (generous)
     const ratio = Math.min(userInterval, vocalsInterval) / Math.max(userInterval, vocalsInterval);
     
     // Allow for half-time and double-time (singing at 0.5x or 2x speed is okay)
     const adjustedRatio = Math.max(ratio, ratio * 2 > 1 ? 2 - ratio * 2 : ratio * 2);
     
-    if (adjustedRatio > 0.85) {
-      return 85 + (adjustedRatio - 0.85) * 100; // 85-100
-    } else if (adjustedRatio > 0.70) {
-      return 70 + (adjustedRatio - 0.70) * 100; // 70-85  
-    } else if (adjustedRatio > 0.50) {
-      return 55 + (adjustedRatio - 0.50) * 75; // 55-70
+    // More generous scoring tiers
+    if (adjustedRatio > 0.80) {
+      return 90 + (adjustedRatio - 0.80) * 50; // 90-100
+    } else if (adjustedRatio > 0.65) {
+      return 80 + (adjustedRatio - 0.65) * 67; // 80-90  
+    } else if (adjustedRatio > 0.45) {
+      return 70 + (adjustedRatio - 0.45) * 50; // 70-80
     }
-    return 50 + adjustedRatio * 10; // 50-55
+    return 65 + adjustedRatio * 11; // 65-70
   }, []);
 
-  // Lenient technique comparison (volume dynamics and pitch stability)
+  // Generous technique comparison (volume dynamics and pitch stability)
   const compareTechnique = useCallback((
     userVolumes: number[],
     vocalsVolumes: number[],
     userPitches: number[],
     vocalsPitches: number[]
   ): number => {
-    let score = 60; // Base score for singing
+    let score = 75; // Higher base score for singing
     
-    // Volume dynamics comparison
+    // Volume dynamics comparison - more generous rewards
     if (userVolumes.length > 5 && vocalsVolumes.length > 5) {
       const userVolRange = Math.max(...userVolumes) - Math.min(...userVolumes);
       const vocalsVolRange = Math.max(...vocalsVolumes) - Math.min(...vocalsVolumes);
@@ -166,14 +168,16 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
       if (vocalsVolRange > 0.05) {
         // If vocals have dynamics, reward user for having similar dynamics
         const dynamicsRatio = Math.min(userVolRange, vocalsVolRange) / Math.max(userVolRange, vocalsVolRange);
-        score += dynamicsRatio > 0.5 ? 15 : dynamicsRatio > 0.25 ? 10 : 5;
+        score += dynamicsRatio > 0.4 ? 12 : dynamicsRatio > 0.2 ? 10 : 8;
       } else {
         // Vocals are steady, reward user for any dynamics (expression)
-        score += userVolRange > 0.1 ? 10 : userVolRange > 0.05 ? 8 : 5;
+        score += userVolRange > 0.08 ? 12 : userVolRange > 0.04 ? 10 : 8;
       }
+    } else {
+      score += 5; // Small bonus even without enough data
     }
     
-    // Pitch stability comparison
+    // Pitch stability comparison - more generous rewards
     if (userPitches.length > 5 && vocalsPitches.length > 5) {
       const calcCV = (arr: number[]) => {
         const avg = arr.reduce((a, b) => a + b, 0) / arr.length;
@@ -185,17 +189,19 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
       const userCV = calcCV(userPitches);
       const vocalsCV = calcCV(vocalsPitches);
       
-      // Compare coefficient of variation (similar stability = good)
+      // Compare coefficient of variation (similar stability = good) - more generous
       const cvDiff = Math.abs(userCV - vocalsCV);
-      if (cvDiff < 0.1) {
-        score += 20; // Very similar stability
-      } else if (cvDiff < 0.2) {
-        score += 15;
-      } else if (cvDiff < 0.3) {
-        score += 10;
+      if (cvDiff < 0.15) {
+        score += 13; // Very similar stability
+      } else if (cvDiff < 0.25) {
+        score += 11;
+      } else if (cvDiff < 0.40) {
+        score += 9;
       } else {
-        score += 5;
+        score += 7;
       }
+    } else {
+      score += 5; // Small bonus even without enough data
     }
     
     return Math.min(100, score);
