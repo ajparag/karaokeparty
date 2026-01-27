@@ -9,14 +9,5 @@ verify_jwt = false
 [functions.fetch-lyrics]
 verify_jwt = false
 
-[functions.transcribe-audio]
-verify_jwt = false
-
-[functions.speechmatics-transcribe]
-verify_jwt = false
-
-[functions.speechmatics-realtime]
-verify_jwt = false
-
 [functions.separate-vocals]
 verify_jwt = false
