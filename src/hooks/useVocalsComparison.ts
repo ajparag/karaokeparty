@@ -263,8 +263,11 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
 
   // Start analysis
   const startAnalysis = useCallback(async () => {
+    console.log('[vocals-comparison] startAnalysis called');
+    
     try {
       // Request microphone
+      console.log('[vocals-comparison] Requesting microphone...');
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
@@ -272,11 +275,14 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
           autoGainControl: true,
         }
       });
+      console.log('[vocals-comparison] Microphone access granted');
       userStreamRef.current = stream;
       setHasPermission(true);
       
       // Create audio context for user mic
+      console.log('[vocals-comparison] Creating AudioContext...');
       const audioContext = new AudioContext();
+      console.log('[vocals-comparison] AudioContext created, state:', audioContext.state);
       userAudioContextRef.current = audioContext;
       
       // Create analyzer for user mic
