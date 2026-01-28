@@ -49,7 +49,9 @@ export type Database = {
       }
       scores: {
         Row: {
+          city: string | null
           created_at: string
+          display_name: string | null
           duration_seconds: number | null
           id: string
           rating: string
@@ -63,7 +65,9 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          city?: string | null
           created_at?: string
+          display_name?: string | null
           duration_seconds?: number | null
           id?: string
           rating: string
@@ -77,7 +81,9 @@ export type Database = {
           user_id: string
         }
         Update: {
+          city?: string | null
           created_at?: string
+          display_name?: string | null
           duration_seconds?: number | null
           id?: string
           rating?: string
