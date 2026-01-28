@@ -600,9 +600,6 @@ const Sing = () => {
     
     if (timeRemaining <= 3 && timeRemaining > 0 && !preEndTriggeredRef.current && !showScoreSubmission && !showResults) {
       preEndTriggeredRef.current = true;
-      // Pause the audio
-      audioRef.current?.pause();
-      vocalsAudioRef.current?.pause();
       setShowScoreSubmission(true);
     }
   }, [currentTime, duration, isPlaying, showScoreSubmission, showResults]);
