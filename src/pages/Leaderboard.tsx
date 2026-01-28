@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
-import { Trophy, Medal, Award, Music, ArrowLeft } from 'lucide-react';
+import { Trophy, Medal, Award, Music, ArrowLeft, MapPin } from 'lucide-react';
 
 interface LeaderboardEntry {
   id: string;
@@ -19,9 +19,8 @@ interface TopScore {
   song_title: string;
   song_artist: string | null;
   thumbnail_url: string | null;
-  profiles: {
-    username: string;
-  } | null;
+  display_name: string | null;
+  city: string | null;
 }
 
 export default function Leaderboard() {
@@ -43,14 +42,11 @@ export default function Leaderboard() {
 
       const { data: scores } = await supabase
         .from('scores')
-        .select(`
-          id, score, rating, song_title, song_artist, thumbnail_url,
-          profiles!scores_user_id_fkey (username)
-        `)
+        .select('id, score, rating, song_title, song_artist, thumbnail_url, display_name, city')
         .order('score', { ascending: false })
         .limit(10);
 
-      if (scores) setTopScores(scores as unknown as TopScore[]);
+      if (scores) setTopScores(scores as TopScore[]);
       setLoading(false);
     };
 
@@ -180,7 +176,15 @@ export default function Leaderboard() {
                     )}
                     <div className="flex-1 min-w-0">
                       <div className="font-medium truncate">{score.song_title}</div>
-                      <div className="text-sm text-muted-foreground">by {score.profiles?.username || 'Anonymous'}</div>
+                      <div className="text-sm text-muted-foreground flex items-center gap-2">
+                        <span>{score.display_name || 'Anonymous'}</span>
+                        {score.city && (
+                          <span className="flex items-center gap-0.5 text-xs">
+                            <MapPin className="h-3 w-3" />
+                            {score.city}
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <div className="text-right">
                       <span className={`text-xl font-bold ${getRatingColor(score.rating)}`}>{score.rating}</span>

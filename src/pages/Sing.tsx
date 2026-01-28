@@ -28,6 +28,7 @@ import { useVocalsComparison } from "@/hooks/useVocalsComparison";
 import { useAuth } from "@/hooks/useAuth";
 import { Slider } from "@/components/ui/slider";
 import { useVocalSeparation } from "@/hooks/useVocalSeparation";
+import { ScoreSubmissionDialog } from "@/components/karaoke/ScoreSubmissionDialog";
 
 interface Track {
   id: string;
@@ -75,6 +76,8 @@ const Sing = () => {
   const [isPlayerReady, setIsPlayerReady] = useState(false);
   const [volume, setVolume] = useState(80);
   const [isMuted, setIsMuted] = useState(false);
+  const [showScoreSubmission, setShowScoreSubmission] = useState(false);
+  const preEndTriggeredRef = useRef(false);
   
   // Lyrics search dialog state
   const [lyricsDialogOpen, setLyricsDialogOpen] = useState(false);
@@ -579,6 +582,8 @@ const Sing = () => {
     lastScoreSampleAtRef.current = 0;
     resetScores();
     setShowResults(false);
+    setShowScoreSubmission(false);
+    preEndTriggeredRef.current = false;
     if (audioRef.current) {
       audioRef.current.currentTime = 0;
     }
@@ -586,6 +591,70 @@ const Sing = () => {
       vocalsAudioRef.current.currentTime = 0;
     }
   }, [resetScores]);
+
+  // Trigger score submission dialog 3 seconds before song ends
+  useEffect(() => {
+    if (!isPlaying || duration === 0) return;
+    
+    const timeRemaining = duration - currentTime;
+    
+    if (timeRemaining <= 3 && timeRemaining > 0 && !preEndTriggeredRef.current && !showScoreSubmission && !showResults) {
+      preEndTriggeredRef.current = true;
+      // Pause the audio
+      audioRef.current?.pause();
+      vocalsAudioRef.current?.pause();
+      setShowScoreSubmission(true);
+    }
+  }, [currentTime, duration, isPlaying, showScoreSubmission, showResults]);
+
+  const handleScoreSubmit = async (displayName: string, city: string) => {
+    if (!user || !track) {
+      toast({ title: "Please sign in to save scores", variant: "destructive" });
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const avgPitch = scoreAccumulatorRef.current.count > 0 
+        ? scoreAccumulatorRef.current.pitch / scoreAccumulatorRef.current.count : 0;
+      const avgRhythm = scoreAccumulatorRef.current.count > 0 
+        ? scoreAccumulatorRef.current.rhythm / scoreAccumulatorRef.current.count : 0;
+
+      const scoreRating = totalScore >= 900 ? 'L' : totalScore >= 800 ? 'S' : totalScore >= 700 ? 'A' : 
+                   totalScore >= 600 ? 'B' : totalScore >= 500 ? 'C' : totalScore >= 300 ? 'D' : 'F';
+
+      const { error } = await supabase.from('scores').insert({
+        user_id: user.id,
+        song_title: track.title,
+        song_artist: track.artist,
+        track_id: track.id,
+        score: totalScore,
+        rating: scoreRating,
+        timing_accuracy: Math.round(avgPitch),
+        rhythm_accuracy: Math.round(avgRhythm),
+        duration_seconds: Math.round(duration),
+        thumbnail_url: track.thumbnail,
+        display_name: displayName || null,
+        city: city || null,
+      });
+
+      if (error) throw error;
+
+      toast({ title: "Score saved to leaderboard!" });
+      setShowScoreSubmission(false);
+      navigate('/leaderboard');
+    } catch (error) {
+      console.error('Failed to save score:', error);
+      toast({ title: "Failed to save score", variant: "destructive" });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleCloseScoreSubmission = () => {
+    setShowScoreSubmission(false);
+    setShowResults(true);
+  };
 
   const handleSaveScore = async () => {
     if (!user || !track) {
@@ -839,6 +908,17 @@ const Sing = () => {
           </AlertDialogHeader>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Score Submission Dialog - appears 3 seconds before song ends */}
+      <ScoreSubmissionDialog
+        isOpen={showScoreSubmission}
+        onClose={handleCloseScoreSubmission}
+        onSubmit={handleScoreSubmit}
+        score={totalScore}
+        rating={rating}
+        songTitle={track?.title || 'Unknown Song'}
+        isSubmitting={isSaving}
+      />
 
       {/* Results Overlay */}
       {showResults && (
