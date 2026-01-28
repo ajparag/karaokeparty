@@ -221,7 +221,11 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
       vocalsAudioRef.current = vocalsAudio;
       
       // Create audio context for analysis
-      const audioContext = new AudioContext();
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      const audioContext = new AudioContextClass({ latencyHint: 'interactive' });
+      if (audioContext.state === 'suspended') {
+        await audioContext.resume();
+      }
       vocalsAudioContextRef.current = audioContext;
       
       // Wait for audio to be ready
@@ -281,17 +285,29 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
       
       // Create audio context for user mic
       console.log('[vocals-comparison] Creating AudioContext...');
-      const audioContext = new AudioContext();
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      const audioContext = new AudioContextClass({ latencyHint: 'interactive' });
       console.log('[vocals-comparison] AudioContext created, state:', audioContext.state);
+      
+      // CRITICAL: Resume AudioContext if suspended (required on some devices)
+      if (audioContext.state === 'suspended') {
+        console.log('[vocals-comparison] AudioContext suspended, resuming...');
+        await audioContext.resume();
+        console.log('[vocals-comparison] AudioContext resumed, new state:', audioContext.state);
+      }
+      
       userAudioContextRef.current = audioContext;
       
       // Create analyzer for user mic
       const analyser = audioContext.createAnalyser();
       analyser.fftSize = 2048;
+      analyser.smoothingTimeConstant = 0.8;
       userAnalyserRef.current = analyser;
       
       const source = audioContext.createMediaStreamSource(stream);
       source.connect(analyser);
+      
+      console.log('[vocals-comparison] Analyser connected, fftSize:', analyser.fftSize);
       
       // Initialize vocals analysis
       await initVocalsAnalysis();
@@ -300,6 +316,7 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
       const userFrequencyData = new Uint8Array(analyser.frequencyBinCount);
       const userTimeData = new Uint8Array(analyser.fftSize);
       
+      let frameCount = 0;
       const analyze = () => {
         if (!userAnalyserRef.current || !userAudioContextRef.current) return;
         
@@ -310,6 +327,17 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
         const userVolume = calculateVolume(userTimeData);
         const userPitch = detectPitch(userFrequencyData, userAudioContextRef.current.sampleRate);
         const isVoiceDetected = userVolume > 0.02;
+        
+        // Debug logging every 60 frames (~1 second)
+        frameCount++;
+        if (frameCount % 60 === 0) {
+          console.log('[vocals-comparison] Analysis tick:', {
+            volume: userVolume.toFixed(4),
+            pitch: userPitch.toFixed(1),
+            voiceDetected: isVoiceDetected,
+            audioCtxState: userAudioContextRef.current?.state,
+          });
+        }
         
         // Update user histories
         if (isVoiceDetected) {
