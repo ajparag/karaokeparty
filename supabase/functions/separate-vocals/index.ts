@@ -6,9 +6,9 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// Use Spleeter-based spaces for faster processing (~10-15s vs Demucs ~30-60s)
-const PRIMARY_SPACE = "Anjali1241/spleeter_colab"; // Spleeter - faster, good quality
-const FALLBACK_SPACE = "abidlabs/music-separation"; // Demucs - slower but higher quality fallback
+// Use reliable Demucs-based spaces - better quality and more stable
+const PRIMARY_SPACE = "abidlabs/music-separation"; // Demucs v4 - stable, high quality
+const FALLBACK_SPACE = "r3gm/Audio_separator"; // Alternative Demucs - also stable
 
 // Retry with exponential backoff for HF cold starts
 async function connectWithRetry(spaceId: string, hfToken: string, maxRetries = 2): Promise<any> {
@@ -204,23 +204,33 @@ async function processSeparation(audioBlob: Blob): Promise<Response> {
   let vocalsUrl: string | null = null;
 
   // Parse result - handle various HF space output formats
+  // Demucs v4 returns: [{url, orig_name, path, ...}, {url, orig_name, path, ...}]
+  // where orig_name contains the stem type (e.g., "no_vocals.wav", "vocals.wav")
   if (Array.isArray(data)) {
-    // Check filenames to determine which is which
+    // Check filenames/orig_name to determine which is which
     for (const item of data) {
-      if (item && typeof item === 'object' && 'url' in item) {
+      if (item && typeof item === 'object') {
         const url = item.url as string;
-        const urlLower = url.toLowerCase();
-        if (urlLower.includes('no_vocals') || urlLower.includes('instrumental') || 
-            urlLower.includes('accompaniment') || urlLower.includes('music')) {
+        const origName = (item.orig_name || item.path || '').toLowerCase();
+        const urlLower = (url || '').toLowerCase();
+        const checkString = origName || urlLower;
+        
+        console.log("[separate-vocals] Checking item:", { url: url?.slice(0, 80), origName, checkString });
+        
+        if (checkString.includes('no_vocals') || checkString.includes('no-vocals') || 
+            checkString.includes('instrumental') || checkString.includes('accompaniment') || 
+            checkString.includes('other') || checkString.includes('music')) {
           instrumentalUrl = url;
-        } else if (urlLower.includes('vocals') || urlLower.includes('voice')) {
+          console.log("[separate-vocals] Found instrumental:", origName);
+        } else if (checkString.includes('vocals') || checkString.includes('voice')) {
           vocalsUrl = url;
+          console.log("[separate-vocals] Found vocals:", origName);
         }
       } else if (typeof item === 'string') {
         // Direct URL strings
         const urlLower = item.toLowerCase();
-        if (urlLower.includes('no_vocals') || urlLower.includes('instrumental') || 
-            urlLower.includes('accompaniment') || urlLower.includes('music')) {
+        if (urlLower.includes('no_vocals') || urlLower.includes('no-vocals') ||
+            urlLower.includes('instrumental') || urlLower.includes('accompaniment')) {
           instrumentalUrl = item;
         } else if (urlLower.includes('vocals') || urlLower.includes('voice')) {
           vocalsUrl = item;
@@ -228,17 +238,21 @@ async function processSeparation(audioBlob: Blob): Promise<Response> {
       }
     }
     
-    // Fallback: positional assignment [vocals, no_vocals] or [accompaniment, vocals]
-    if (!instrumentalUrl && !vocalsUrl && data.length >= 2) {
+    // Fallback: positional assignment if we found URLs but couldn't identify them
+    // Demucs typically outputs [vocals, no_vocals] or [no_vocals, vocals]
+    if (data.length >= 2) {
       const getUrl = (item: any) => typeof item === 'string' ? item : item?.url;
       const url0 = getUrl(data[0]);
       const url1 = getUrl(data[1]);
       
       if (url0 && url1) {
-        // Common convention: first is vocals, second is instrumental
-        vocalsUrl = url0;
-        instrumentalUrl = url1;
-        console.log("[separate-vocals] Using positional assignment: vocals first, instrumental second");
+        // If we don't have both, try to assign based on position
+        if (!instrumentalUrl || !vocalsUrl) {
+          // Demucs v4 typically: first = no_vocals/accompaniment, second = vocals
+          instrumentalUrl = instrumentalUrl || url0;
+          vocalsUrl = vocalsUrl || url1;
+          console.log("[separate-vocals] Using positional fallback - instrumental:", url0?.slice(0, 50), "vocals:", url1?.slice(0, 50));
+        }
       }
     }
   } else if (data && typeof data === 'object') {
@@ -253,6 +267,8 @@ async function processSeparation(audioBlob: Blob): Promise<Response> {
     if (data.vocals?.url) vocalsUrl = data.vocals.url;
     else if (typeof data.vocals === 'string') vocalsUrl = data.vocals;
   }
+
+  console.log("[separate-vocals] Final URLs - instrumental:", instrumentalUrl?.slice(0, 80), "vocals:", vocalsUrl?.slice(0, 80));
 
   if (!instrumentalUrl) {
     console.error("[separate-vocals] Could not find instrumental URL in result:", JSON.stringify(data));
