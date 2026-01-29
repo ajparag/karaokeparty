@@ -1,4 +1,10 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
+import {
+  cleanupAudio,
+  createAudioContext,
+  formatMicrophoneError,
+  requestMicrophone,
+} from '@/lib/audioPermissions';
 
 interface VocalsComparisonMetrics {
   pitchMatch: number;      // 0-100 how close user pitch is to vocals pitch
@@ -33,8 +39,12 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
   // User mic analysis refs
   const userAudioContextRef = useRef<AudioContext | null>(null);
   const userAnalyserRef = useRef<AnalyserNode | null>(null);
+  const userGainRef = useRef<GainNode | null>(null);
+  const userSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const userStreamRef = useRef<MediaStream | null>(null);
   const animationFrameRef = useRef<number | null>(null);
+  const didMicFallbackRef = useRef(false);
+  const lowSignalFramesRef = useRef(0);
 
   // Reference vocals analysis refs  
   const vocalsAudioContextRef = useRef<AudioContext | null>(null);
@@ -80,6 +90,56 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
       sum += value * value;
     }
     return Math.sqrt(sum / timeData.length);
+  }, []);
+
+  const calculateFrequencyEnergy = useCallback((frequencyData: Uint8Array): number => {
+    // Normalize 0..255 -> 0..1, then average.
+    // Some devices/drivers report more useful changes in frequency magnitude than time-domain RMS.
+    let sum = 0;
+    for (let i = 0; i < frequencyData.length; i++) sum += frequencyData[i];
+    return (sum / frequencyData.length) / 255;
+  }, []);
+
+  const requestRawMicrophone = useCallback(async (): Promise<MediaStream> => {
+    // Some Windows laptop mic drivers + browser DSP (AEC/NS/AGC) can produce near-silent analyzer data.
+    // Raw constraints can be more reliable for analysis.
+    return navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+      },
+    });
+  }, []);
+
+  const connectUserStream = useCallback((stream: MediaStream) => {
+    const audioContext = userAudioContextRef.current;
+    const analyser = userAnalyserRef.current;
+    if (!audioContext || !analyser) return;
+
+    // Disconnect old nodes (if any)
+    try {
+      userSourceRef.current?.disconnect();
+    } catch {
+      // ignore
+    }
+    try {
+      userGainRef.current?.disconnect();
+    } catch {
+      // ignore
+    }
+
+    const source = audioContext.createMediaStreamSource(stream);
+
+    // Gentle gain boost to improve detection on low-output mic arrays.
+    const gain = audioContext.createGain();
+    gain.gain.value = 2.5;
+
+    source.connect(gain);
+    gain.connect(analyser);
+
+    userSourceRef.current = source;
+    userGainRef.current = gain;
   }, []);
 
   // Generous pitch comparison - rewards singing with higher base scores
@@ -270,32 +330,21 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
     console.log('[vocals-comparison] startAnalysis called');
     
     try {
-      // Request microphone
+      setError(null);
+      didMicFallbackRef.current = false;
+      lowSignalFramesRef.current = 0;
+
+      // Request microphone (centralized permissions + iOS routing safety)
       console.log('[vocals-comparison] Requesting microphone...');
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        }
-      });
+      const stream = await requestMicrophone();
       console.log('[vocals-comparison] Microphone access granted');
       userStreamRef.current = stream;
       setHasPermission(true);
-      
+
       // Create audio context for user mic
       console.log('[vocals-comparison] Creating AudioContext...');
-      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-      const audioContext = new AudioContextClass({ latencyHint: 'interactive' });
+      const audioContext = await createAudioContext();
       console.log('[vocals-comparison] AudioContext created, state:', audioContext.state);
-      
-      // CRITICAL: Resume AudioContext if suspended (required on some devices)
-      if (audioContext.state === 'suspended') {
-        console.log('[vocals-comparison] AudioContext suspended, resuming...');
-        await audioContext.resume();
-        console.log('[vocals-comparison] AudioContext resumed, new state:', audioContext.state);
-      }
-      
       userAudioContextRef.current = audioContext;
       
       // Create analyzer for user mic
@@ -303,9 +352,9 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
       analyser.fftSize = 2048;
       analyser.smoothingTimeConstant = 0.8;
       userAnalyserRef.current = analyser;
-      
-      const source = audioContext.createMediaStreamSource(stream);
-      source.connect(analyser);
+
+      // Connect stream -> gain -> analyser
+      connectUserStream(stream);
       
       console.log('[vocals-comparison] Analyser connected, fftSize:', analyser.fftSize);
       
@@ -324,19 +373,54 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
         userAnalyserRef.current.getByteFrequencyData(userFrequencyData);
         userAnalyserRef.current.getByteTimeDomainData(userTimeData);
         
-        const userVolume = calculateVolume(userTimeData);
+        const userVolumeRms = calculateVolume(userTimeData);
+        const userFreqEnergy = calculateFrequencyEnergy(userFrequencyData);
+        // Use the stronger signal of the two.
+        const userVolume = Math.max(userVolumeRms, userFreqEnergy * 0.35);
         const userPitch = detectPitch(userFrequencyData, userAudioContextRef.current.sampleRate);
-        const isVoiceDetected = userVolume > 0.02;
+        const isVoiceDetected = userVolume > 0.015;
         
         // Debug logging every 60 frames (~1 second)
         frameCount++;
         if (frameCount % 60 === 0) {
           console.log('[vocals-comparison] Analysis tick:', {
             volume: userVolume.toFixed(4),
+            rms: userVolumeRms.toFixed(4),
+            freq: userFreqEnergy.toFixed(4),
             pitch: userPitch.toFixed(1),
             voiceDetected: isVoiceDetected,
+            micFallback: didMicFallbackRef.current,
             audioCtxState: userAudioContextRef.current?.state,
           });
+        }
+
+        // Auto-fallback: if we appear to have a “working” mic permission but the analyzer signal is
+        // near-silent for a while, retry with raw constraints (Windows laptop fix).
+        if (!didMicFallbackRef.current) {
+          if (userVolume < 0.008) {
+            lowSignalFramesRef.current += 1;
+          } else {
+            lowSignalFramesRef.current = 0;
+          }
+
+          // ~2 seconds at 60fps
+          if (lowSignalFramesRef.current > 120) {
+            didMicFallbackRef.current = true;
+            lowSignalFramesRef.current = 0;
+
+            console.warn('[vocals-comparison] Low mic signal detected; retrying with raw constraints');
+
+            requestRawMicrophone()
+              .then((rawStream) => {
+                // stop previous stream
+                userStreamRef.current?.getTracks().forEach((t) => t.stop());
+                userStreamRef.current = rawStream;
+                connectUserStream(rawStream);
+              })
+              .catch((e) => {
+                console.warn('[vocals-comparison] Raw mic fallback failed:', e);
+              });
+          }
         }
         
         // Update user histories
@@ -450,9 +534,21 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
       
     } catch (err) {
       console.error('[vocals-comparison] Error:', err);
-      setError(err instanceof Error ? err.message : 'Failed to start analysis');
+      setError(formatMicrophoneError(err));
+      setHasPermission(false);
     }
-  }, [initVocalsAnalysis, detectPitch, calculateVolume, comparePitch, compareRhythm, compareTechnique, options]);
+  }, [
+    initVocalsAnalysis,
+    detectPitch,
+    calculateVolume,
+    calculateFrequencyEnergy,
+    comparePitch,
+    compareRhythm,
+    compareTechnique,
+    options,
+    connectUserStream,
+    requestRawMicrophone,
+  ]);
 
   // Stop analysis
   const stopAnalysis = useCallback(() => {
@@ -461,15 +557,12 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
       animationFrameRef.current = null;
     }
     
-    if (userStreamRef.current) {
-      userStreamRef.current.getTracks().forEach(track => track.stop());
-      userStreamRef.current = null;
-    }
-    
-    if (userAudioContextRef.current) {
-      userAudioContextRef.current.close();
-      userAudioContextRef.current = null;
-    }
+    cleanupAudio(userStreamRef.current, userAudioContextRef.current);
+    userStreamRef.current = null;
+    userAudioContextRef.current = null;
+    userAnalyserRef.current = null;
+    userGainRef.current = null;
+    userSourceRef.current = null;
     
     if (vocalsAudioRef.current) {
       vocalsAudioRef.current.pause();
