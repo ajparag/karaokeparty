@@ -94,12 +94,40 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
     return Math.sqrt(sum / timeData.length);
   }, []);
 
+  // Higher-resolution RMS (avoids 8-bit quantization issues on some Windows/Lenovo mic drivers)
+  const calculateRmsFloat = useCallback((timeData: Float32Array): number => {
+    let sum = 0;
+    for (let i = 0; i < timeData.length; i++) {
+      const v = timeData[i];
+      sum += v * v;
+    }
+    return Math.sqrt(sum / timeData.length);
+  }, []);
+
   const calculateFrequencyEnergy = useCallback((frequencyData: Uint8Array): number => {
     // Normalize 0..255 -> 0..1, then average.
     // Some devices/drivers report more useful changes in frequency magnitude than time-domain RMS.
     let sum = 0;
     for (let i = 0; i < frequencyData.length; i++) sum += frequencyData[i];
     return (sum / frequencyData.length) / 255;
+  }, []);
+
+  // Convert dB bins (getFloatFrequencyData) into a 0..1-ish energy estimate.
+  // This is more sensitive than getByteFrequencyData when signals are very quiet.
+  const calculateFrequencyEnergyDb = useCallback((dbData: Float32Array): number => {
+    let sum = 0;
+    let count = 0;
+    for (let i = 0; i < dbData.length; i++) {
+      const db = dbData[i];
+      if (!Number.isFinite(db)) continue;
+      // Convert dBFS to linear magnitude (roughly 0..1)
+      const lin = Math.pow(10, db / 20);
+      sum += lin;
+      count += 1;
+    }
+    if (count === 0) return 0;
+    // Clamp: extreme drivers can sometimes spit unexpected values
+    return Math.min(1, Math.max(0, sum / count));
   }, []);
 
   const requestRawMicrophone = useCallback(async (): Promise<MediaStream> => {
@@ -380,6 +408,9 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
       const analyser = audioContext.createAnalyser();
       analyser.fftSize = 2048;
       analyser.smoothingTimeConstant = 0.8;
+      // Increase sensitivity for very quiet inputs (common on some Windows laptop mic paths)
+      analyser.minDecibels = -120;
+      analyser.maxDecibels = -10;
       userAnalyserRef.current = analyser;
 
       // Connect stream -> gain -> analyser
@@ -393,6 +424,8 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
       // Start analysis loop
       const userFrequencyData = new Uint8Array(analyser.frequencyBinCount);
       const userTimeData = new Uint8Array(analyser.fftSize);
+      const userTimeFloatData = new Float32Array(analyser.fftSize);
+      const userFreqDbData = new Float32Array(analyser.frequencyBinCount);
       
       let frameCount = 0;
       const analyze = () => {
@@ -401,11 +434,26 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
         // Get user audio data
         userAnalyserRef.current.getByteFrequencyData(userFrequencyData);
         userAnalyserRef.current.getByteTimeDomainData(userTimeData);
+
+        // Higher-resolution reads (helps when byte-based analyzers stay near-flat)
+        userAnalyserRef.current.getFloatTimeDomainData(userTimeFloatData);
+        userAnalyserRef.current.getFloatFrequencyData(userFreqDbData);
         
-        const userVolumeRms = calculateVolume(userTimeData);
-        const userFreqEnergy = calculateFrequencyEnergy(userFrequencyData);
-        // Use the stronger signal of the two.
-        const userVolume = Math.max(userVolumeRms, userFreqEnergy * 0.35);
+        const userVolumeRmsByte = calculateVolume(userTimeData);
+        const userVolumeRmsFloat = calculateRmsFloat(userTimeFloatData);
+
+        const userFreqEnergyByte = calculateFrequencyEnergy(userFrequencyData);
+        const userFreqEnergyDb = calculateFrequencyEnergyDb(userFreqDbData);
+
+        // Use the strongest signal across our estimators.
+        // - float RMS catches very quiet time-domain signals
+        // - dB frequency energy catches cases where byte FFT is all zeros
+        const userVolume = Math.max(
+          userVolumeRmsByte,
+          userVolumeRmsFloat,
+          userFreqEnergyByte * 0.35,
+          userFreqEnergyDb * 0.35
+        );
         const userPitch = detectPitch(userFrequencyData, userAudioContextRef.current.sampleRate);
         const isVoiceDetected = userVolume > 0.015;
         
@@ -414,8 +462,8 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
         if (frameCount % 60 === 0) {
           console.log('[vocals-comparison] Analysis tick:', {
             volume: userVolume.toFixed(4),
-            rms: userVolumeRms.toFixed(4),
-            freq: userFreqEnergy.toFixed(4),
+            rms: userVolumeRmsFloat.toFixed(4),
+            freq: userFreqEnergyDb.toFixed(4),
             pitch: userPitch.toFixed(1),
             voiceDetected: isVoiceDetected,
             micFallback: didMicFallbackRef.current,
@@ -571,6 +619,8 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
     detectPitch,
     calculateVolume,
     calculateFrequencyEnergy,
+    calculateRmsFloat,
+    calculateFrequencyEnergyDb,
     comparePitch,
     compareRhythm,
     compareTechnique,
