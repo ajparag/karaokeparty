@@ -40,6 +40,7 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
   const userAudioContextRef = useRef<AudioContext | null>(null);
   const userAnalyserRef = useRef<AnalyserNode | null>(null);
   const userGainRef = useRef<GainNode | null>(null);
+  const userKeepAliveGainRef = useRef<GainNode | null>(null);
   const userSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const userStreamRef = useRef<MediaStream | null>(null);
   const animationFrameRef = useRef<number | null>(null);
@@ -51,6 +52,7 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
   const vocalsAnalyserRef = useRef<AnalyserNode | null>(null);
   const vocalsSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
   const vocalsAudioRef = useRef<HTMLAudioElement | null>(null);
+  const vocalsKeepAliveGainRef = useRef<GainNode | null>(null);
 
   // History refs for comparison
   const userPitchHistoryRef = useRef<number[]>([]);
@@ -137,6 +139,24 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
 
     source.connect(gain);
     gain.connect(analyser);
+
+    // IMPORTANT:
+    // Some browser/driver combinations (notably on certain Windows laptops) won't fully process an
+    // audio graph unless it ultimately connects to the destination. If the analyser isn't pulled,
+    // getByteTimeDomainData/getByteFrequencyData can stay near-silent even though mic permission is granted.
+    // We connect the analyser to a near-silent gain node, then to destination, to keep the graph alive
+    // without causing audible feedback.
+    if (!userKeepAliveGainRef.current) {
+      userKeepAliveGainRef.current = audioContext.createGain();
+      userKeepAliveGainRef.current.gain.value = 0.00001;
+    }
+    try {
+      analyser.disconnect();
+    } catch {
+      // ignore
+    }
+    analyser.connect(userKeepAliveGainRef.current);
+    userKeepAliveGainRef.current.connect(audioContext.destination);
 
     userSourceRef.current = source;
     userGainRef.current = gain;
@@ -303,7 +323,16 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
       // Connect audio element to analyzer
       const source = audioContext.createMediaElementSource(vocalsAudio);
       source.connect(analyser);
-      // Don't connect to destination (keep muted)
+
+      // Keep analysis graph alive (some environments don't process nodes unless connected to destination).
+      // Vocals audio is already muted via element volume=0, but we additionally route through a near-silent gain.
+      if (!vocalsKeepAliveGainRef.current) {
+        vocalsKeepAliveGainRef.current = audioContext.createGain();
+        vocalsKeepAliveGainRef.current.gain.value = 0.00001;
+      }
+      analyser.connect(vocalsKeepAliveGainRef.current);
+      vocalsKeepAliveGainRef.current.connect(audioContext.destination);
+
       vocalsSourceRef.current = source;
       
       console.log('[vocals-comparison] Vocals analysis initialized');
@@ -562,6 +591,7 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
     userAudioContextRef.current = null;
     userAnalyserRef.current = null;
     userGainRef.current = null;
+    userKeepAliveGainRef.current = null;
     userSourceRef.current = null;
     
     if (vocalsAudioRef.current) {
@@ -573,6 +603,8 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
       vocalsAudioContextRef.current.close();
       vocalsAudioContextRef.current = null;
     }
+
+    vocalsKeepAliveGainRef.current = null;
     
     setIsActive(false);
     console.log('[vocals-comparison] Analysis stopped');
