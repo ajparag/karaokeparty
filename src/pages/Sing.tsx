@@ -353,14 +353,17 @@ const Sing = () => {
     const sampleScore = () => {
       const currentMetrics = metricsRef.current;
       
-      // Sample if we have any voice activity or volume
-      const hasActivity = currentMetrics.isVoiceDetected || currentMetrics.volume > 0.01;
+      // Sample if we have any voice activity or detectable input.
+      // Some Windows/Lenovo paths yield very small WebAudio magnitudes, so we use a lower floor.
+      const hasActivity = currentMetrics.isVoiceDetected || currentMetrics.volume > 0.003;
       
       if (hasActivity) {
         // Use comparison-based metrics from vocals comparison hook
-        const pitch = currentMetrics.pitchMatch || (currentMetrics.isVoiceDetected ? 60 : 0);
-        const rhythm = currentMetrics.rhythmMatch || (currentMetrics.isVoiceDetected ? 60 : 0);
-        const technique = currentMetrics.techniqueMatch || (currentMetrics.isVoiceDetected ? 55 : 0);
+        // If the signal is present but "voiceDetected" is flaky on certain drivers,
+        // still give baseline points so the score doesn't stick at 0.
+        const pitch = currentMetrics.pitchMatch || (hasActivity ? 60 : 0);
+        const rhythm = currentMetrics.rhythmMatch || (hasActivity ? 60 : 0);
+        const technique = currentMetrics.techniqueMatch || (hasActivity ? 55 : 0);
         
         scoreAccumulatorRef.current.pitch += pitch;
         scoreAccumulatorRef.current.rhythm += rhythm;

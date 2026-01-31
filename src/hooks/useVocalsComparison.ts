@@ -46,6 +46,9 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
   const animationFrameRef = useRef<number | null>(null);
   const didMicFallbackRef = useRef(false);
   const lowSignalFramesRef = useRef(0);
+  // Adaptive noise floor for devices that produce very small analyser magnitudes
+  // (common on some Windows laptop mic paths). Used to derive a dynamic voice threshold.
+  const noiseFloorRef = useRef(0.0015);
 
   // Reference vocals analysis refs  
   const vocalsAudioContextRef = useRef<AudioContext | null>(null);
@@ -163,7 +166,9 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
 
     // Gentle gain boost to improve detection on low-output mic arrays.
     const gain = audioContext.createGain();
-    gain.gain.value = 2.5;
+    // NOTE: This gain is for analysis only (we route to destination through a near-silent keep-alive).
+    // Some Lenovo/Windows paths report extremely low WebAudio magnitudes, so we boost more aggressively.
+    gain.gain.value = 12;
 
     source.connect(gain);
     gain.connect(analyser);
@@ -455,7 +460,18 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
           userFreqEnergyDb * 0.35
         );
         const userPitch = detectPitch(userFrequencyData, userAudioContextRef.current.sampleRate);
-        const isVoiceDetected = userVolume > 0.015;
+
+        // --- Adaptive voice detection ---
+        // Keep a slowly-adapting noise floor estimate, then derive a dynamic threshold.
+        // This prevents “forever silent” scoring on devices where magnitudes are tiny.
+        if (Number.isFinite(userVolume)) {
+          const nf = noiseFloorRef.current;
+          // Only learn from quiet-ish frames so singing doesn't raise the noise floor too much.
+          const candidate = userVolume < 0.03 ? userVolume : nf;
+          noiseFloorRef.current = nf * 0.98 + candidate * 0.02;
+        }
+        const voiceThreshold = Math.max(0.004, noiseFloorRef.current * 4);
+        const isVoiceDetected = userVolume > voiceThreshold;
         
         // Debug logging every 60 frames (~1 second)
         frameCount++;
@@ -466,6 +482,8 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
             freq: userFreqEnergyDb.toFixed(4),
             pitch: userPitch.toFixed(1),
             voiceDetected: isVoiceDetected,
+            voiceThreshold: voiceThreshold.toFixed(4),
+            noiseFloor: noiseFloorRef.current.toFixed(4),
             micFallback: didMicFallbackRef.current,
             audioCtxState: userAudioContextRef.current?.state,
           });
@@ -474,7 +492,8 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
         // Auto-fallback: if we appear to have a “working” mic permission but the analyzer signal is
         // near-silent for a while, retry with raw constraints (Windows laptop fix).
         if (!didMicFallbackRef.current) {
-          if (userVolume < 0.008) {
+          // Consider it "low signal" if we're consistently below our dynamic threshold.
+          if (userVolume < voiceThreshold * 0.6) {
             lowSignalFramesRef.current += 1;
           } else {
             lowSignalFramesRef.current = 0;
@@ -501,7 +520,8 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
         }
         
         // Update user histories
-        if (isVoiceDetected) {
+        // Use a slightly lower bar than voiceDetected so we still build history on very quiet inputs.
+        if (userVolume > voiceThreshold * 0.7) {
           if (userPitch > 0) {
             userPitchHistoryRef.current.push(userPitch);
             if (userPitchHistoryRef.current.length > 50) userPitchHistoryRef.current.shift();
