@@ -3,7 +3,9 @@ import { Client } from "https://esm.sh/@gradio/client@1.8.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
 // Use reliable Demucs-based spaces - better quality and more stable
@@ -28,6 +30,52 @@ async function connectWithRetry(spaceId: string, hfToken: string, maxRetries = 2
       console.log(`[separate-vocals] Retrying in ${delay}ms...`);
       await new Promise(resolve => setTimeout(resolve, delay));
     }
+  }
+}
+
+function safeJsonStringify(value: unknown): string {
+  const seen = new WeakSet<object>();
+  return JSON.stringify(
+    value,
+    (_key, v) => {
+      if (typeof v === "object" && v !== null) {
+        if (seen.has(v as object)) return "[circular]";
+        seen.add(v as object);
+      }
+      if (typeof v === "bigint") return v.toString();
+      return v;
+    },
+    2,
+  );
+}
+
+function serializeError(err: unknown): { message: string; name?: string; stack?: string; raw?: unknown } {
+  if (err instanceof Error) {
+    return {
+      name: err.name,
+      message: err.message,
+      stack: err.stack,
+    };
+  }
+  if (typeof err === "string") {
+    return { message: err };
+  }
+  // Some libs throw plain objects (e.g., Gradio status objects)
+  return {
+    message: "Non-Error thrown",
+    raw: err,
+  };
+}
+
+async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timeoutId: number | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timeoutId != null) clearTimeout(timeoutId);
   }
 }
 
@@ -162,11 +210,12 @@ serve(async (req) => {
     );
 
   } catch (error) {
-    console.error("[separate-vocals] Error:", error);
+    const serialized = serializeError(error);
+    console.error("[separate-vocals] Error:", safeJsonStringify(serialized));
     return new Response(
       JSON.stringify({ 
-        error: error instanceof Error ? error.message : "Unknown error",
-        details: String(error)
+        error: serialized.message,
+        details: serialized,
       }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
@@ -184,21 +233,63 @@ async function processSeparation(audioBlob: Blob): Promise<Response> {
   }
 
   console.log("[separate-vocals] Connecting to fastest available HF space...");
-  
-  // Connect with fallback support
-  const { client, spaceId } = await connectToFastestSpace(HF_TOKEN);
 
-  console.log(`[separate-vocals] Using space: ${spaceId}, submitting for separation...`);
-  
-  // Call the predict endpoint with the audio blob
-  const result = await client.predict("/predict", {
-    audio: audioBlob,
-  });
+  // Predict can fail even after a successful connect (HF queue / cold restart / transient network).
+  // We retry and allow fallback space on predict failure.
+  const maxPredictAttempts = 3;
+  let lastPredictError: unknown = null;
+  let result: any = null;
+  let usedSpaceId: string | null = null;
+
+  for (let attempt = 1; attempt <= maxPredictAttempts; attempt++) {
+    try {
+      // Connect (primary, then fallback)
+      const { client, spaceId } = await connectToFastestSpace(HF_TOKEN);
+      usedSpaceId = spaceId;
+      console.log(`[separate-vocals] Predict attempt ${attempt}/${maxPredictAttempts} using ${spaceId}...`);
+
+      // Call predict with a generous timeout (HF queues can be slow)
+      result = await withTimeout(
+        client.predict("/predict", { audio: audioBlob }),
+        120_000,
+        "HF /predict",
+      );
+
+      break; // success
+    } catch (err) {
+      lastPredictError = err;
+      const serialized = serializeError(err);
+      console.error(
+        `[separate-vocals] Predict attempt ${attempt} failed:`,
+        safeJsonStringify(serialized),
+      );
+
+      if (attempt < maxPredictAttempts) {
+        // Backoff: 1s, 2s
+        const delay = Math.pow(2, attempt - 1) * 1000;
+        console.log(`[separate-vocals] Retrying predict in ${delay}ms...`);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+  }
+
+  if (!result) {
+    const serialized = serializeError(lastPredictError);
+    return new Response(
+      JSON.stringify({
+        error: "Separation failed",
+        details: serialized,
+        success: false,
+        spaceId: usedSpaceId,
+      }),
+      { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
 
   console.log("[separate-vocals] Separation complete, processing result...");
 
   const data = result.data as any;
-  console.log("[separate-vocals] Raw result data:", JSON.stringify(data, null, 2));
+  console.log("[separate-vocals] Raw result data:", safeJsonStringify(data));
   
   let instrumentalUrl: string | null = null;
   let vocalsUrl: string | null = null;
@@ -271,7 +362,7 @@ async function processSeparation(audioBlob: Blob): Promise<Response> {
   console.log("[separate-vocals] Final URLs - instrumental:", instrumentalUrl?.slice(0, 80), "vocals:", vocalsUrl?.slice(0, 80));
 
   if (!instrumentalUrl) {
-    console.error("[separate-vocals] Could not find instrumental URL in result:", JSON.stringify(data));
+    console.error("[separate-vocals] Could not find instrumental URL in result:", safeJsonStringify(data));
     return new Response(
       JSON.stringify({ error: "Failed to extract instrumental track from result", rawData: data }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
