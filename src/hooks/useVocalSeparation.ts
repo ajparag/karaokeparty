@@ -205,36 +205,69 @@ function writeString(view: DataView, offset: number, string: string) {
   }
 }
 
-// Download with streaming for faster first byte
-async function downloadWithStreaming(url: string): Promise<Blob> {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Failed to download: ${response.statusText}`);
-  }
-  
-  // Use streaming if available for progress tracking
-  if (response.body) {
-    const reader = response.body.getReader();
-    const chunks: Uint8Array[] = [];
-    
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string, onTimeout?: () => void): Promise<T> {
+  let timeoutId: number | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timeoutId = window.setTimeout(() => {
+      try {
+        onTimeout?.();
+      } finally {
+        reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`));
+      }
+    }, ms);
+  });
+
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timeoutId != null) window.clearTimeout(timeoutId);
+  });
+}
+
+async function downloadWithStreaming(url: string, opts?: { timeoutMs?: number; label?: string }): Promise<Blob> {
+  const timeoutMs = opts?.timeoutMs ?? 90_000;
+  const label = opts?.label ?? 'download';
+
+  const controller = new AbortController();
+  const downloadPromise = (async () => {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      // HF can be finicky with caching/redirects; these hints reduce “stuck” fetches.
+      cache: 'no-store',
+      redirect: 'follow',
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to download (${response.status}): ${response.statusText}`);
     }
-    
-    const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
-    const result = new Uint8Array(totalLength);
-    let offset = 0;
-    for (const chunk of chunks) {
-      result.set(chunk, offset);
-      offset += chunk.length;
+
+    // Use streaming if available; otherwise fall back to blob.
+    if (response.body) {
+      const reader = response.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let total = 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+          chunks.push(value);
+          total += value.length;
+        }
+      }
+
+      const result = new Uint8Array(total);
+      let offset = 0;
+      for (const chunk of chunks) {
+        result.set(chunk, offset);
+        offset += chunk.length;
+      }
+
+      return new Blob([result]);
     }
-    
-    return new Blob([result]);
-  }
-  
-  return response.blob();
+
+    return await response.blob();
+  })();
+
+  return withTimeout(downloadPromise, timeoutMs, label, () => controller.abort());
 }
 
 export function useVocalSeparation() {
@@ -306,11 +339,27 @@ export function useVocalSeparation() {
 
       setProgress('Downloading tracks...');
 
-      // Download instrumental and vocals in parallel with streaming
-      const [instrumentalBlob, vocalsBlob] = await Promise.all([
-        downloadWithStreaming(data.instrumentalUrl),
-        data.vocalsUrl ? downloadWithStreaming(data.vocalsUrl) : Promise.resolve(undefined),
-      ]);
+      // Download with timeouts + resilience.
+      // If vocals download fails, we still proceed with instrumental-only to avoid freezing the session.
+      setProgress('Downloading instrumental...');
+      const instrumentalBlob = await downloadWithStreaming(data.instrumentalUrl, {
+        label: 'Instrumental download',
+        timeoutMs: 120_000,
+      });
+
+      let vocalsBlob: Blob | undefined;
+      if (data.vocalsUrl) {
+        setProgress('Downloading vocals...');
+        try {
+          vocalsBlob = await downloadWithStreaming(data.vocalsUrl, {
+            label: 'Vocals download',
+            timeoutMs: 120_000,
+          });
+        } catch (e) {
+          console.warn('[VocalSeparation] Vocals download failed; continuing instrumental-only:', e);
+          vocalsBlob = undefined;
+        }
+      }
 
       // Create object URLs immediately for playback
       const instrumentalUrl = URL.createObjectURL(instrumentalBlob);
