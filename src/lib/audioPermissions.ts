@@ -58,21 +58,46 @@ export async function createAudioContext(): Promise<AudioContext> {
  * @returns The MediaStream from the microphone
  */
 export async function requestMicrophone(): Promise<MediaStream> {
+  const ua = navigator.userAgent || '';
+  const isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && (navigator as any).maxTouchPoints > 1);
+
   // Step 1: Reset audio session to 'auto' BEFORE requesting microphone
   // This prevents iOS from getting stuck in a bad audio routing state
   setAudioSessionType('auto');
 
-  // Step 2: Request microphone with minimal constraints for iOS compatibility
-  // Complex constraints can cause silent failures on iOS Safari 17+
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio: {
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true,
-    },
-  });
+  // Step 2: Request microphone.
+  // IMPORTANT:
+  // - iOS Safari needs conservative, compatible constraints.
+  // - Some Windows laptop mic/DSP paths (common on Lenovo) can yield near-silent WebAudio analyser
+  //   magnitudes when AEC/NS/AGC are enabled. Legacy code usually used `audio: true` (raw).
+  const stream = await navigator.mediaDevices.getUserMedia(
+    isIOS
+      ? {
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        }
+      : {
+          // Prefer raw capture for analysis reliability on desktop.
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false,
+          },
+        }
+  );
 
   console.log('[audio] Microphone stream obtained, tracks:', stream.getAudioTracks().length);
+
+  try {
+    const t = stream.getAudioTracks()[0];
+    console.log('[audio] Mic track settings:', t?.getSettings?.());
+    console.log('[audio] Mic track constraints:', t?.getConstraints?.());
+  } catch {
+    // ignore
+  }
 
   // Step 3: "Kick" audio session to 'play-and-record' AFTER getting the stream
   // This forces iOS to properly route audio for simultaneous playback and recording
