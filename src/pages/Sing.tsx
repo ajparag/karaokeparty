@@ -29,6 +29,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { Slider } from "@/components/ui/slider";
 import { useVocalSeparation } from "@/hooks/useVocalSeparation";
 import { ScoreSubmissionDialog } from "@/components/karaoke/ScoreSubmissionDialog";
+import { AudioDebugOverlay } from "@/components/karaoke/AudioDebugOverlay";
 
 interface Track {
   id: string;
@@ -119,6 +120,8 @@ const Sing = () => {
     currentTime,
     isPlaying,
   });
+
+  const showAudioDebug = new URLSearchParams(window.location.search).get('debugAudio') === '1';
 
   // Vocals volume control (0-100, default 30%)
   const [vocalsVolume, setVocalsVolume] = useState(30);
@@ -719,6 +722,23 @@ const Sing = () => {
 
   return (
     <div className="h-[100dvh] bg-background flex flex-col overflow-hidden">
+      {showAudioDebug ? (
+        <AudioDebugOverlay
+          debug={{
+            micActive: isMicActive,
+            micError,
+            volume: metrics.volume,
+            voiceDetected: metrics.isVoiceDetected,
+            referenceActive: metrics.referenceActive,
+            voiceThreshold: metrics.debug?.voiceThreshold,
+            noiseFloor: metrics.debug?.noiseFloor,
+            audioCtxState: metrics.debug?.audioCtxState,
+            micFallback: metrics.debug?.micFallback,
+            userVolumeRmsFloat: metrics.debug?.userVolumeRmsFloat,
+            userFreqEnergyDb: metrics.debug?.userFreqEnergyDb,
+          }}
+        />
+      ) : null}
       {/* Header */}
       <header className="glass border-b border-border p-2 md:p-4 flex items-center gap-2 md:gap-4 shrink-0">
         <Button variant="ghost" size="icon" onClick={() => navigate('/')}>

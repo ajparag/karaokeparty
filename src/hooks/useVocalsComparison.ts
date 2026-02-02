@@ -13,6 +13,14 @@ interface VocalsComparisonMetrics {
   volume: number;          // Current user volume level 0-1
   isVoiceDetected: boolean;
   referenceActive: boolean; // Whether the reference vocals are currently active
+  debug?: {
+    voiceThreshold: number;
+    noiseFloor: number;
+    audioCtxState: AudioContextState | 'unknown';
+    micFallback: boolean;
+    userVolumeRmsFloat: number;
+    userFreqEnergyDb: number;
+  };
 }
 
 interface UseVocalsComparisonOptions {
@@ -616,6 +624,14 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
             volume: userVolume,
             isVoiceDetected,
             referenceActive,
+            debug: {
+              voiceThreshold,
+              noiseFloor: noiseFloorRef.current,
+              audioCtxState: userAudioContextRef.current?.state ?? 'unknown',
+              micFallback: didMicFallbackRef.current,
+              userVolumeRmsFloat,
+              userFreqEnergyDb,
+            },
           };
           
           options.onMetricsUpdate?.(newMetrics);
