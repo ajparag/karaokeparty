@@ -16,11 +16,10 @@ const PREFETCH_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 let hfSpaceWarmedUp = false;
 let hfWarmUpPromise: Promise<void> | null = null;
 
-// Warm up HuggingFace space proactively (non-blocking)
+// Warm up HuggingFace space proactively (non-blocking, singleton)
 export async function warmUpHFSpace(): Promise<void> {
-  if (hfSpaceWarmedUp || hfWarmUpPromise) {
-    return hfWarmUpPromise || Promise.resolve();
-  }
+  if (hfSpaceWarmedUp) return Promise.resolve();
+  if (hfWarmUpPromise) return hfWarmUpPromise;
 
   hfWarmUpPromise = (async () => {
     try {
@@ -30,7 +29,7 @@ export async function warmUpHFSpace(): Promise<void> {
       });
       if (data?.ready) {
         hfSpaceWarmedUp = true;
-        console.log('[VocalSeparation] HF space is warm and ready!');
+        console.log('[VocalSeparation] HF space is warm!');
       }
     } catch (err) {
       console.warn('[VocalSeparation] HF warm-up failed (non-critical):', err);
@@ -311,12 +310,12 @@ export function useVocalSeparation() {
 
       // Get audio blob (from prefetch cache or fresh download)
       const audioBlob = await getAudioBlob(audioUrl);
+
+      // Skip compression for faster upload - the HF model handles full quality fine
+      // and compression adds 1-3s of client-side processing.
+      const compressedBlob = audioBlob;
       
-      // Compress audio for faster upload
-      setProgress('Optimizing audio...');
-      const compressedBlob = await compressAudio(audioBlob);
-      
-      setProgress(`Processing audio (${Math.round(compressedBlob.size / 1024)}KB)...`);
+      setProgress(`Uploading (${Math.round(compressedBlob.size / 1024)}KB)...`);
 
       // Use FormData for streaming upload (no base64 overhead!)
       const formData = new FormData();
@@ -339,27 +338,24 @@ export function useVocalSeparation() {
 
       setProgress('Downloading tracks...');
 
-      // Download with timeouts + resilience.
-      // If vocals download fails, we still proceed with instrumental-only to avoid freezing the session.
-      setProgress('Downloading instrumental...');
-      const instrumentalBlob = await downloadWithStreaming(data.instrumentalUrl, {
+      // Download both tracks in PARALLEL for speed.
+      // If vocals download fails, we still proceed with instrumental-only.
+      const instrumentalPromise = downloadWithStreaming(data.instrumentalUrl, {
         label: 'Instrumental download',
-        timeoutMs: 120_000,
+        timeoutMs: 90_000,
       });
 
-      let vocalsBlob: Blob | undefined;
-      if (data.vocalsUrl) {
-        setProgress('Downloading vocals...');
-        try {
-          vocalsBlob = await downloadWithStreaming(data.vocalsUrl, {
+      const vocalsPromise = data.vocalsUrl
+        ? downloadWithStreaming(data.vocalsUrl, {
             label: 'Vocals download',
-            timeoutMs: 120_000,
-          });
-        } catch (e) {
-          console.warn('[VocalSeparation] Vocals download failed; continuing instrumental-only:', e);
-          vocalsBlob = undefined;
-        }
-      }
+            timeoutMs: 90_000,
+          }).catch((e) => {
+            console.warn('[VocalSeparation] Vocals download failed; continuing instrumental-only:', e);
+            return undefined;
+          })
+        : Promise.resolve(undefined);
+
+      const [instrumentalBlob, vocalsBlob] = await Promise.all([instrumentalPromise, vocalsPromise]);
 
       // Create object URLs immediately for playback
       const instrumentalUrl = URL.createObjectURL(instrumentalBlob);
