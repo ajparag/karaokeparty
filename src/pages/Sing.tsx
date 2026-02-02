@@ -157,12 +157,18 @@ const Sing = () => {
     }
   }, [trackId, navigate, toast]);
 
-  // Load separated audio from IndexedDB cache (separation already happened on Index page)
+  // Load separated audio from IndexedDB cache (separation already happened on Index page).
+  // IMPORTANT: Only call once per track to avoid duplicate processing.
+  const separationTriggeredRef = useRef<string | null>(null);
   useEffect(() => {
     if (track?.audioUrl && !separatedAudio && !isLoadingFromCache) {
+      // Prevent duplicate calls for the same track
+      if (separationTriggeredRef.current === track.audioUrl) return;
+      separationTriggeredRef.current = track.audioUrl;
+
       loadFromCache(track.audioUrl).then((result) => {
         if (result) {
-          console.log('[sing] Loaded separated audio from cache:', result.fromCache ? 'cached' : 'processed');
+          console.log('[sing] Loaded separated audio:', result.fromCache ? 'cached' : 'processed');
         }
       });
     }
