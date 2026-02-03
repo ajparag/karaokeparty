@@ -377,27 +377,39 @@ async function processSeparation(audioBlob: Blob): Promise<Response> {
   
   try {
     // Download tracks in parallel
-    const [instrumentalData, vocalsData] = await Promise.all([
+    const [instrumentalBuffer, vocalsBuffer] = await Promise.all([
       downloadAndCompress(instrumentalUrl, "instrumental"),
       vocalsUrl ? downloadAndCompress(vocalsUrl, "vocals") : Promise.resolve(null),
     ]);
 
-    console.log("[separate-vocals] Compression complete!", {
-      instrumentalSize: instrumentalData?.size,
-      vocalsSize: vocalsData?.size,
-    });
+    if (!instrumentalBuffer) {
+      throw new Error("Failed to get instrumental buffer");
+    }
 
-    return new Response(
-      JSON.stringify({
-        // Return compressed audio as base64 for smaller payload
-        instrumentalBase64: instrumentalData?.base64,
-        instrumentalSize: instrumentalData?.size,
-        vocalsBase64: vocalsData?.base64,
-        vocalsSize: vocalsData?.size,
-        success: true,
-      }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    const totalSize = instrumentalBuffer.byteLength + (vocalsBuffer?.byteLength || 0);
+    console.log("[separate-vocals] Compression complete! Total:", Math.round(totalSize / 1024), "KB");
+
+    // Return as binary blob with simple format:
+    // [4 bytes: instrumental size (uint32 LE)]
+    // [instrumental WAV data]
+    // [vocals WAV data (remaining bytes, if any)]
+    const binaryResponse = new Uint8Array(4 + instrumentalBuffer.byteLength + (vocalsBuffer?.byteLength || 0));
+    const sizeView = new DataView(binaryResponse.buffer);
+    sizeView.setUint32(0, instrumentalBuffer.byteLength, true); // little-endian
+    binaryResponse.set(new Uint8Array(instrumentalBuffer), 4);
+    if (vocalsBuffer) {
+      binaryResponse.set(new Uint8Array(vocalsBuffer), 4 + instrumentalBuffer.byteLength);
+    }
+
+    return new Response(binaryResponse.buffer, {
+      headers: {
+        ...corsHeaders,
+        "Content-Type": "application/octet-stream",
+        "X-Instrumental-Size": instrumentalBuffer.byteLength.toString(),
+        "X-Vocals-Size": (vocalsBuffer?.byteLength || 0).toString(),
+        "X-Total-Size": totalSize.toString(),
+      },
+    });
   } catch (downloadError) {
     // Fallback to URL mode if compression fails
     console.warn("[separate-vocals] Compression failed, returning URLs:", downloadError);
@@ -413,8 +425,8 @@ async function processSeparation(audioBlob: Blob): Promise<Response> {
   }
 }
 
-// Download audio from HF and compress to smaller size
-async function downloadAndCompress(url: string, label: string): Promise<{ base64: string; size: number } | null> {
+// Download audio from HF and compress to smaller size - returns ArrayBuffer
+async function downloadAndCompress(url: string, label: string): Promise<ArrayBuffer | null> {
   try {
     console.log(`[separate-vocals] Downloading ${label} from HF...`);
     const response = await fetch(url);
@@ -434,10 +446,7 @@ async function downloadAndCompress(url: string, label: string): Promise<{ base64
     
     console.log(`[separate-vocals] ${label} compressed: ${Math.round(originalSize / 1024)}KB -> ${Math.round(compressedSize / 1024)}KB (${Math.round((1 - compressedSize / originalSize) * 100)}% reduction)`);
     
-    // Convert to base64 for JSON transport
-    const base64 = btoa(String.fromCharCode(...new Uint8Array(compressedBuffer)));
-    
-    return { base64, size: compressedSize };
+    return compressedBuffer;
   } catch (error) {
     console.error(`[separate-vocals] Failed to download/compress ${label}:`, error);
     throw error;

@@ -8,16 +8,6 @@ interface SeparationResult {
   fromCache?: boolean;
 }
 
-// Helper to convert base64 string to Blob
-function base64ToBlob(base64: string, mimeType: string): Blob {
-  const binaryString = atob(base64);
-  const bytes = new Uint8Array(binaryString.length);
-  for (let i = 0; i < binaryString.length; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
-  return new Blob([bytes], { type: mimeType });
-}
-
 // Audio prefetch cache - stores downloaded blobs before separation starts
 const audioPrefetchCache = new Map<string, { blob: Blob; timestamp: number }>();
 const PREFETCH_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
@@ -333,36 +323,70 @@ export function useVocalSeparation() {
       
       setProgress('AI vocal separation...');
       
-      // Call edge function with FormData (streaming)
-      const { data, error: fnError } = await supabase.functions.invoke('separate-vocals', {
+      // Call edge function with FormData - use fetch directly to handle binary response
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+      
+      const response = await fetch(`${supabaseUrl}/functions/v1/separate-vocals`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${supabaseKey}`,
+          'apikey': supabaseKey,
+        },
         body: formData,
       });
 
-      if (fnError) {
-        throw new Error(fnError.message || 'Separation failed');
-      }
-
-      if (!data?.success) {
-        throw new Error(data?.error || 'Separation failed');
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Separation failed: ${response.status} - ${errorText}`);
       }
 
       let instrumentalBlob: Blob;
       let vocalsBlob: Blob | undefined;
 
-      // Handle new compressed base64 format (preferred - much smaller download)
-      if (data.instrumentalBase64) {
-        setProgress('Decoding compressed tracks...');
-        console.log('[VocalSeparation] Received compressed tracks:', {
-          instrumentalSize: data.instrumentalSize ? `${Math.round(data.instrumentalSize / 1024)}KB` : 'N/A',
-          vocalsSize: data.vocalsSize ? `${Math.round(data.vocalsSize / 1024)}KB` : 'N/A',
+      const contentType = response.headers.get('Content-Type') || '';
+      
+      // Handle binary blob response (preferred - no base64 overhead)
+      if (contentType.includes('application/octet-stream')) {
+        setProgress('Processing compressed tracks...');
+        
+        const binaryData = await response.arrayBuffer();
+        const view = new DataView(binaryData);
+        const instrumentalSize = view.getUint32(0, true); // little-endian
+        const vocalsSize = binaryData.byteLength - 4 - instrumentalSize;
+        
+        console.log('[VocalSeparation] Received binary tracks:', {
+          instrumentalSize: `${Math.round(instrumentalSize / 1024)}KB`,
+          vocalsSize: vocalsSize > 0 ? `${Math.round(vocalsSize / 1024)}KB` : 'none',
+          totalSize: `${Math.round(binaryData.byteLength / 1024)}KB`,
         });
 
-        // Decode base64 to blobs
-        instrumentalBlob = base64ToBlob(data.instrumentalBase64, 'audio/wav');
-        vocalsBlob = data.vocalsBase64 ? base64ToBlob(data.vocalsBase64, 'audio/wav') : undefined;
-      } 
-      // Fallback to URL download (legacy/fallback mode)
-      else if (data.instrumentalUrl) {
+        // Extract instrumental
+        instrumentalBlob = new Blob(
+          [new Uint8Array(binaryData, 4, instrumentalSize)],
+          { type: 'audio/wav' }
+        );
+
+        // Extract vocals if present
+        if (vocalsSize > 0) {
+          vocalsBlob = new Blob(
+            [new Uint8Array(binaryData, 4 + instrumentalSize, vocalsSize)],
+            { type: 'audio/wav' }
+          );
+        }
+      }
+      // Handle JSON response (fallback mode with URLs)
+      else {
+        const data = await response.json();
+        
+        if (!data?.success) {
+          throw new Error(data?.error || 'Separation failed');
+        }
+
+        if (!data.instrumentalUrl) {
+          throw new Error('No audio data in response');
+        }
+
         setProgress('Downloading tracks...');
 
         // Download both tracks in PARALLEL for speed.
@@ -382,8 +406,6 @@ export function useVocalSeparation() {
           : Promise.resolve(undefined);
 
         [instrumentalBlob, vocalsBlob] = await Promise.all([instrumentalPromise, vocalsPromise]) as [Blob, Blob | undefined];
-      } else {
-        throw new Error('No audio data in response');
       }
 
       // Create object URLs immediately for playback
