@@ -8,6 +8,9 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+// Target compressed size per track (in bytes) - aim for ~1.2MB each to stay under 2.5MB total
+const TARGET_SIZE_BYTES = 1_200_000;
+
 // Use reliable Demucs-based spaces - better quality and more stable
 const PRIMARY_SPACE = "abidlabs/music-separation"; // Demucs v4 - stable, high quality
 const FALLBACK_SPACE = "r3gm/Audio_separator"; // Alternative Demucs - also stable
@@ -369,14 +372,203 @@ async function processSeparation(audioBlob: Blob): Promise<Response> {
     );
   }
 
-  console.log("[separate-vocals] Success! Instrumental URL:", instrumentalUrl);
+  // Download and compress both tracks to reduce client download size
+  console.log("[separate-vocals] Downloading and compressing tracks...");
+  
+  try {
+    // Download tracks in parallel
+    const [instrumentalData, vocalsData] = await Promise.all([
+      downloadAndCompress(instrumentalUrl, "instrumental"),
+      vocalsUrl ? downloadAndCompress(vocalsUrl, "vocals") : Promise.resolve(null),
+    ]);
 
-  return new Response(
-    JSON.stringify({
-      instrumentalUrl,
-      vocalsUrl,
-      success: true,
-    }),
-    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-  );
+    console.log("[separate-vocals] Compression complete!", {
+      instrumentalSize: instrumentalData?.size,
+      vocalsSize: vocalsData?.size,
+    });
+
+    return new Response(
+      JSON.stringify({
+        // Return compressed audio as base64 for smaller payload
+        instrumentalBase64: instrumentalData?.base64,
+        instrumentalSize: instrumentalData?.size,
+        vocalsBase64: vocalsData?.base64,
+        vocalsSize: vocalsData?.size,
+        success: true,
+      }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  } catch (downloadError) {
+    // Fallback to URL mode if compression fails
+    console.warn("[separate-vocals] Compression failed, returning URLs:", downloadError);
+    return new Response(
+      JSON.stringify({
+        instrumentalUrl,
+        vocalsUrl,
+        success: true,
+        compressed: false,
+      }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+}
+
+// Download audio from HF and compress to smaller size
+async function downloadAndCompress(url: string, label: string): Promise<{ base64: string; size: number } | null> {
+  try {
+    console.log(`[separate-vocals] Downloading ${label} from HF...`);
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Failed to download ${label}: ${response.status}`);
+    }
+    
+    const originalBuffer = await response.arrayBuffer();
+    const originalSize = originalBuffer.byteLength;
+    console.log(`[separate-vocals] ${label} original size: ${Math.round(originalSize / 1024)}KB`);
+    
+    // The HF spaces return WAV files. We'll downsample to reduce size.
+    // For maximum compatibility, we return a smaller WAV (mono, 22kHz, 16-bit)
+    // This typically achieves 4x size reduction while maintaining karaoke quality.
+    const compressedBuffer = await compressWavAudio(originalBuffer, label);
+    const compressedSize = compressedBuffer.byteLength;
+    
+    console.log(`[separate-vocals] ${label} compressed: ${Math.round(originalSize / 1024)}KB -> ${Math.round(compressedSize / 1024)}KB (${Math.round((1 - compressedSize / originalSize) * 100)}% reduction)`);
+    
+    // Convert to base64 for JSON transport
+    const base64 = btoa(String.fromCharCode(...new Uint8Array(compressedBuffer)));
+    
+    return { base64, size: compressedSize };
+  } catch (error) {
+    console.error(`[separate-vocals] Failed to download/compress ${label}:`, error);
+    throw error;
+  }
+}
+
+// Compress WAV by downsampling to mono 22kHz 16-bit
+async function compressWavAudio(buffer: ArrayBuffer, label: string): Promise<ArrayBuffer> {
+  const view = new DataView(buffer);
+  
+  // Parse WAV header
+  const riff = String.fromCharCode(view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3));
+  if (riff !== 'RIFF') {
+    console.warn(`[separate-vocals] ${label} is not a WAV file, returning as-is`);
+    return buffer;
+  }
+  
+  // Read WAV format info
+  const numChannels = view.getUint16(22, true);
+  const sampleRate = view.getUint32(24, true);
+  const bitsPerSample = view.getUint16(34, true);
+  
+  console.log(`[separate-vocals] ${label} WAV: ${numChannels}ch, ${sampleRate}Hz, ${bitsPerSample}bit`);
+  
+  // Find data chunk
+  let dataOffset = 12;
+  let dataSize = 0;
+  while (dataOffset < buffer.byteLength - 8) {
+    const chunkId = String.fromCharCode(
+      view.getUint8(dataOffset),
+      view.getUint8(dataOffset + 1),
+      view.getUint8(dataOffset + 2),
+      view.getUint8(dataOffset + 3)
+    );
+    const chunkSize = view.getUint32(dataOffset + 4, true);
+    
+    if (chunkId === 'data') {
+      dataSize = chunkSize;
+      dataOffset += 8;
+      break;
+    }
+    dataOffset += 8 + chunkSize;
+  }
+  
+  if (dataSize === 0) {
+    console.warn(`[separate-vocals] ${label} data chunk not found`);
+    return buffer;
+  }
+  
+  // Extract samples
+  const bytesPerSample = bitsPerSample / 8;
+  const numSamples = dataSize / (bytesPerSample * numChannels);
+  
+  // Target: mono 22050Hz 16-bit (good for karaoke, ~4x smaller than stereo 44.1kHz)
+  const targetSampleRate = 22050;
+  const targetChannels = 1;
+  const targetBitsPerSample = 16;
+  
+  // Calculate resampling ratio
+  const ratio = sampleRate / targetSampleRate;
+  const outputSamples = Math.floor(numSamples / ratio);
+  
+  // Create output buffer
+  const outputBytesPerSample = targetBitsPerSample / 8;
+  const outputDataSize = outputSamples * outputBytesPerSample * targetChannels;
+  const outputBuffer = new ArrayBuffer(44 + outputDataSize);
+  const outputView = new DataView(outputBuffer);
+  
+  // Write WAV header
+  writeString(outputView, 0, 'RIFF');
+  outputView.setUint32(4, 36 + outputDataSize, true);
+  writeString(outputView, 8, 'WAVE');
+  writeString(outputView, 12, 'fmt ');
+  outputView.setUint32(16, 16, true); // Subchunk1Size
+  outputView.setUint16(20, 1, true); // AudioFormat (PCM)
+  outputView.setUint16(22, targetChannels, true);
+  outputView.setUint32(24, targetSampleRate, true);
+  outputView.setUint32(28, targetSampleRate * targetChannels * outputBytesPerSample, true); // ByteRate
+  outputView.setUint16(32, targetChannels * outputBytesPerSample, true); // BlockAlign
+  outputView.setUint16(34, targetBitsPerSample, true);
+  writeString(outputView, 36, 'data');
+  outputView.setUint32(40, outputDataSize, true);
+  
+  // Resample and mix to mono with linear interpolation
+  for (let i = 0; i < outputSamples; i++) {
+    const srcPos = i * ratio;
+    const srcIdx = Math.floor(srcPos);
+    const frac = srcPos - srcIdx;
+    
+    let sample = 0;
+    
+    // Mix all channels to mono with interpolation
+    for (let ch = 0; ch < numChannels; ch++) {
+      const offset1 = dataOffset + (srcIdx * numChannels + ch) * bytesPerSample;
+      const offset2 = dataOffset + (Math.min(srcIdx + 1, numSamples - 1) * numChannels + ch) * bytesPerSample;
+      
+      let s1 = 0, s2 = 0;
+      
+      if (bitsPerSample === 16) {
+        s1 = view.getInt16(offset1, true);
+        s2 = view.getInt16(offset2, true);
+      } else if (bitsPerSample === 24) {
+        s1 = (view.getUint8(offset1) | (view.getUint8(offset1 + 1) << 8) | (view.getInt8(offset1 + 2) << 16));
+        s2 = (view.getUint8(offset2) | (view.getUint8(offset2 + 1) << 8) | (view.getInt8(offset2 + 2) << 16));
+        s1 = s1 >> 8; // Convert to 16-bit range
+        s2 = s2 >> 8;
+      } else if (bitsPerSample === 32) {
+        // Assume 32-bit float
+        s1 = Math.round(view.getFloat32(offset1, true) * 32767);
+        s2 = Math.round(view.getFloat32(offset2, true) * 32767);
+      }
+      
+      // Linear interpolation
+      sample += s1 + (s2 - s1) * frac;
+    }
+    
+    // Average channels
+    sample = Math.round(sample / numChannels);
+    
+    // Clamp to 16-bit range
+    sample = Math.max(-32768, Math.min(32767, sample));
+    
+    // Write output sample
+    outputView.setInt16(44 + i * outputBytesPerSample, sample, true);
+  }
+  
+  return outputBuffer;
+}
+
+function writeString(view: DataView, offset: number, str: string) {
+  for (let i = 0; i < str.length; i++) {
+    view.setUint8(offset + i, str.charCodeAt(i));
+  }
 }

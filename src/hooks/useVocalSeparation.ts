@@ -8,6 +8,16 @@ interface SeparationResult {
   fromCache?: boolean;
 }
 
+// Helper to convert base64 string to Blob
+function base64ToBlob(base64: string, mimeType: string): Blob {
+  const binaryString = atob(base64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return new Blob([bytes], { type: mimeType });
+}
+
 // Audio prefetch cache - stores downloaded blobs before separation starts
 const audioPrefetchCache = new Map<string, { blob: Blob; timestamp: number }>();
 const PREFETCH_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
@@ -332,30 +342,49 @@ export function useVocalSeparation() {
         throw new Error(fnError.message || 'Separation failed');
       }
 
-      if (!data?.success || !data?.instrumentalUrl) {
-        throw new Error(data?.error || 'Failed to get instrumental track');
+      if (!data?.success) {
+        throw new Error(data?.error || 'Separation failed');
       }
 
-      setProgress('Downloading tracks...');
+      let instrumentalBlob: Blob;
+      let vocalsBlob: Blob | undefined;
 
-      // Download both tracks in PARALLEL for speed.
-      // If vocals download fails, we still proceed with instrumental-only.
-      const instrumentalPromise = downloadWithStreaming(data.instrumentalUrl, {
-        label: 'Instrumental download',
-        timeoutMs: 90_000,
-      });
+      // Handle new compressed base64 format (preferred - much smaller download)
+      if (data.instrumentalBase64) {
+        setProgress('Decoding compressed tracks...');
+        console.log('[VocalSeparation] Received compressed tracks:', {
+          instrumentalSize: data.instrumentalSize ? `${Math.round(data.instrumentalSize / 1024)}KB` : 'N/A',
+          vocalsSize: data.vocalsSize ? `${Math.round(data.vocalsSize / 1024)}KB` : 'N/A',
+        });
 
-      const vocalsPromise = data.vocalsUrl
-        ? downloadWithStreaming(data.vocalsUrl, {
-            label: 'Vocals download',
-            timeoutMs: 90_000,
-          }).catch((e) => {
-            console.warn('[VocalSeparation] Vocals download failed; continuing instrumental-only:', e);
-            return undefined;
-          })
-        : Promise.resolve(undefined);
+        // Decode base64 to blobs
+        instrumentalBlob = base64ToBlob(data.instrumentalBase64, 'audio/wav');
+        vocalsBlob = data.vocalsBase64 ? base64ToBlob(data.vocalsBase64, 'audio/wav') : undefined;
+      } 
+      // Fallback to URL download (legacy/fallback mode)
+      else if (data.instrumentalUrl) {
+        setProgress('Downloading tracks...');
 
-      const [instrumentalBlob, vocalsBlob] = await Promise.all([instrumentalPromise, vocalsPromise]);
+        // Download both tracks in PARALLEL for speed.
+        const instrumentalPromise = downloadWithStreaming(data.instrumentalUrl, {
+          label: 'Instrumental download',
+          timeoutMs: 90_000,
+        });
+
+        const vocalsPromise = data.vocalsUrl
+          ? downloadWithStreaming(data.vocalsUrl, {
+              label: 'Vocals download',
+              timeoutMs: 90_000,
+            }).catch((e) => {
+              console.warn('[VocalSeparation] Vocals download failed; continuing instrumental-only:', e);
+              return undefined;
+            })
+          : Promise.resolve(undefined);
+
+        [instrumentalBlob, vocalsBlob] = await Promise.all([instrumentalPromise, vocalsPromise]) as [Blob, Blob | undefined];
+      } else {
+        throw new Error('No audio data in response');
+      }
 
       // Create object URLs immediately for playback
       const instrumentalUrl = URL.createObjectURL(instrumentalBlob);
