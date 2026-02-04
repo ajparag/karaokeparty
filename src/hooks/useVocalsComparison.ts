@@ -382,6 +382,15 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
     }
   }, [options.vocalsUrl]);
 
+  // Re-initialize vocals analysis when vocalsUrl becomes available after we're already active
+  // This handles the case where separation completes after startAnalysis was called
+  useEffect(() => {
+    if (isActive && options.vocalsUrl && !vocalsAudioRef.current) {
+      console.log('[vocals-comparison] VocalsUrl became available, initializing vocals analysis...');
+      initVocalsAnalysis();
+    }
+  }, [isActive, options.vocalsUrl, initVocalsAnalysis]);
+
   // Sync vocals audio with main playback
   useEffect(() => {
     const vocalsAudio = vocalsAudioRef.current;
