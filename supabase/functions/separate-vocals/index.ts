@@ -1,6 +1,10 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { Client } from "https://esm.sh/@gradio/client@1.8.0";
 
+// Version for debugging deployments
+const VERSION = "v2.4.0";
+console.log(`[separate-vocals] Edge function loaded, version: ${VERSION}`);
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -119,6 +123,8 @@ async function warmUpSpace(hfToken: string): Promise<boolean> {
 }
 
 serve(async (req) => {
+  console.log(`[separate-vocals] ${VERSION} Request received: ${req.method}`);
+  
   // Handle CORS preflight
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
