@@ -35,10 +35,11 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
   const [hasPermission, setHasPermission] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
+  // Initialize with base scores instead of 0 so scoring starts working immediately
   const [metrics, setMetrics] = useState<VocalsComparisonMetrics>({
-    pitchMatch: 0,
-    rhythmMatch: 0,
-    techniqueMatch: 0,
+    pitchMatch: 70,
+    rhythmMatch: 70,
+    techniqueMatch: 70,
     volume: 0,
     isVoiceDetected: false,
     referenceActive: false,
@@ -615,6 +616,12 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
               rhythmMatch = Math.max(30, prevMetrics.rhythmMatch * 0.95 - 2);
               techniqueMatch = Math.max(30, prevMetrics.techniqueMatch * 0.95 - 2);
             }
+          } else if (isVoiceDetected) {
+            // User is singing during instrumental section - still give points for participation
+            // Use baseline scores to reward singing even without reference comparison
+            pitchMatch = Math.max(prevMetrics.pitchMatch, 65);
+            rhythmMatch = Math.max(prevMetrics.rhythmMatch, 65);
+            techniqueMatch = Math.max(prevMetrics.techniqueMatch, 60);
           }
           
           const newMetrics: VocalsComparisonMetrics = {
@@ -705,10 +712,11 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
     userBeatTimesRef.current = [];
     vocalsBeatTimesRef.current = [];
     
+    // Reset to base scores instead of 0 to ensure scoring works immediately
     setMetrics({
-      pitchMatch: 0,
-      rhythmMatch: 0,
-      techniqueMatch: 0,
+      pitchMatch: 70,
+      rhythmMatch: 70,
+      techniqueMatch: 70,
       volume: 0,
       isVoiceDetected: false,
       referenceActive: false,
