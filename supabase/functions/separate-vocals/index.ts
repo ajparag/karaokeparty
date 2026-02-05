@@ -11,9 +11,9 @@ const corsHeaders = {
 // Target compressed size per track (in bytes) - aim for ~1.2MB each to stay under 2.5MB total
 const TARGET_SIZE_BYTES = 1_200_000;
 
-// Use reliable Demucs-based spaces - better quality and more stable
-const PRIMARY_SPACE = "abidlabs/music-separation"; // Demucs v4 - stable, high quality
-const FALLBACK_SPACE = "r3gm/Audio_separator"; // Alternative Demucs - also stable
+// Use fast Spleeter-based spaces - ~3x faster than Demucs with acceptable quality
+const PRIMARY_SPACE = "Harsha123456/Spleeter"; // Spleeter - fast, good quality
+const FALLBACK_SPACE = "abidlabs/music-separation"; // Demucs v4 as fallback - slower but higher quality
 
 // Retry with exponential backoff for HF cold starts
 async function connectWithRetry(spaceId: string, hfToken: string, maxRetries = 2): Promise<any> {
@@ -365,11 +365,20 @@ async function processSeparation(audioBlob: Blob): Promise<Response> {
   console.log("[separate-vocals] Final URLs - instrumental:", instrumentalUrl?.slice(0, 80), "vocals:", vocalsUrl?.slice(0, 80));
 
   if (!instrumentalUrl) {
-    console.error("[separate-vocals] Could not find instrumental URL in result:", safeJsonStringify(data));
-    return new Response(
-      JSON.stringify({ error: "Failed to extract instrumental track from result", rawData: data }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    // Try fallback: if we have any URL at all, use it as instrumental
+    if (Array.isArray(data) && data.length > 0) {
+      const firstItem = data[0];
+      instrumentalUrl = typeof firstItem === 'string' ? firstItem : firstItem?.url;
+      console.log("[separate-vocals] Fallback: using first URL as instrumental:", instrumentalUrl?.slice(0, 80));
+    }
+    
+    if (!instrumentalUrl) {
+      console.error("[separate-vocals] Could not find instrumental URL in result:", safeJsonStringify(data));
+      return new Response(
+        JSON.stringify({ error: "Failed to extract instrumental track from result", rawData: data }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
   }
 
   // Download and compress both tracks to reduce client download size

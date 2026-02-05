@@ -311,9 +311,8 @@ export function useVocalSeparation() {
       // Get audio blob (from prefetch cache or fresh download)
       const audioBlob = await getAudioBlob(audioUrl);
 
-      // Skip compression for faster upload - the HF model handles full quality fine
-      // and compression adds 1-3s of client-side processing.
-      const compressedBlob = audioBlob;
+      // Compress audio before upload to speed up HF processing
+      const compressedBlob = await compressAudio(audioBlob);
       
       setProgress(`Uploading (${Math.round(compressedBlob.size / 1024)}KB)...`);
 
