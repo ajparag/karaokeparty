@@ -87,8 +87,8 @@ async function getAudioBlob(audioUrl: string): Promise<Blob> {
 // Compress audio using Web Audio API to reduce upload size
 async function compressAudio(audioBlob: Blob): Promise<Blob> {
   try {
-    // Only compress if larger than 2MB
-    if (audioBlob.size < 2 * 1024 * 1024) {
+    // Only compress if larger than 1MB
+    if (audioBlob.size < 1 * 1024 * 1024) {
       console.log('[VocalSeparation] Audio small enough, skipping compression');
       return audioBlob;
     }
@@ -102,8 +102,8 @@ async function compressAudio(audioBlob: Blob): Promise<Blob> {
     const arrayBuffer = await audioBlob.arrayBuffer();
     const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
     
-    // Calculate target sample rate (downsample to 22050 Hz for faster processing)
-    const targetSampleRate = Math.min(22050, audioBuffer.sampleRate);
+    // Calculate target sample rate (downsample to 16000 Hz for faster upload/processing)
+    const targetSampleRate = Math.min(16000, audioBuffer.sampleRate);
     
     // Create offline context for resampling
     const offlineContext = new OfflineAudioContext(

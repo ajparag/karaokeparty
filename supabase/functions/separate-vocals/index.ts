@@ -11,9 +11,9 @@ const corsHeaders = {
 // Target compressed size per track (in bytes) - aim for ~1.2MB each to stay under 2.5MB total
 const TARGET_SIZE_BYTES = 1_200_000;
 
-// Use fast Spleeter-based spaces - ~3x faster than Demucs with acceptable quality
-const PRIMARY_SPACE = "Harsha123456/Spleeter"; // Spleeter - fast, good quality
-const FALLBACK_SPACE = "abidlabs/music-separation"; // Demucs v4 as fallback - slower but higher quality
+// Use reliable Demucs-based spaces - Spleeter space was unreliable
+const PRIMARY_SPACE = "abidlabs/music-separation"; // Demucs v4 - stable, high quality
+const FALLBACK_SPACE = "r3gm/Audio_separator"; // Alternative Demucs - also stable
 
 // Retry with exponential backoff for HF cold starts
 async function connectWithRetry(spaceId: string, hfToken: string, maxRetries = 2): Promise<any> {
@@ -509,8 +509,9 @@ async function compressWavAudio(buffer: ArrayBuffer, label: string): Promise<Arr
   const bytesPerSample = bitsPerSample / 8;
   const numSamples = dataSize / (bytesPerSample * numChannels);
   
-  // Target: mono 22050Hz 16-bit (good for karaoke, ~4x smaller than stereo 44.1kHz)
-  const targetSampleRate = 22050;
+  // Target: mono 16000Hz 16-bit (aggressive compression for fast downloads, ~5.5x smaller)
+  // 16kHz is sufficient for vocal comparison/scoring - not audiophile quality but functional
+  const targetSampleRate = 16000;
   const targetChannels = 1;
   const targetBitsPerSample = 16;
   
