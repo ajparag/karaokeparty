@@ -230,10 +230,9 @@ async function searchSaavn(query: string): Promise<Track[]> {
     }
 
     const tracks: Track[] = data.data.results.map((song: any) => {
-      // Get the highest quality audio URL (prefer 320kbps)
+      // Get audio URL (prefer 160kbps for faster loading, exclude 320kbps)
       const downloadUrls = song.downloadUrl || [];
-      const audioUrl = downloadUrls.find((d: any) => d.quality === '320kbps')?.url 
-        || downloadUrls.find((d: any) => d.quality === '160kbps')?.url
+      const audioUrl = downloadUrls.find((d: any) => d.quality === '160kbps')?.url 
         || downloadUrls.find((d: any) => d.quality === '96kbps')?.url
         || downloadUrls[downloadUrls.length - 1]?.url
         || '';
