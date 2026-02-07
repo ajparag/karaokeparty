@@ -310,15 +310,21 @@ export function useVocalSeparation() {
 
       // Get audio blob (from prefetch cache or fresh download)
       const audioBlob = await getAudioBlob(audioUrl);
-
-      // Compress audio before upload to speed up HF processing
-      const compressedBlob = await compressAudio(audioBlob);
       
-      setProgress(`Uploading (${Math.round(compressedBlob.size / 1024)}KB)...`);
+      // Skip client-side compression - it converts compressed AAC to uncompressed WAV
+      // which actually increases file size. Send original AAC directly to HuggingFace.
+      console.log('[VocalSeparation] Uploading original audio:', Math.round(audioBlob.size / 1024), 'KB');
+      
+      setProgress(`Uploading (${Math.round(audioBlob.size / 1024)}KB)...`);
 
       // Use FormData for streaming upload (no base64 overhead!)
       const formData = new FormData();
-      formData.append('audio', compressedBlob, compressedBlob.type === 'audio/wav' ? 'audio.wav' : 'audio.mp4');
+      // Determine file extension from blob type
+      const extension = audioBlob.type.includes('wav') ? 'audio.wav' 
+        : audioBlob.type.includes('mp4') || audioBlob.type.includes('m4a') ? 'audio.m4a'
+        : audioBlob.type.includes('mpeg') ? 'audio.mp3'
+        : 'audio.mp4';
+      formData.append('audio', audioBlob, extension);
       
       setProgress('AI vocal separation...');
       
