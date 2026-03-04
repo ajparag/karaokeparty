@@ -112,7 +112,7 @@ async function warmUpSpace(hfToken: string): Promise<boolean> {
     const startTime = Date.now();
     
     // Just try to connect - this wakes up the space
-    const client = await Client.connect(PRIMARY_SPACE, {
+    const client = await Client.connect(MP3_SPACE, {
       hf_token: hfToken as `hf_${string}`,
     });
     
