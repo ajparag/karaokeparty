@@ -353,7 +353,9 @@ export function useVocalSeparation() {
       
       // Handle binary blob response (preferred - no base64 overhead)
       if (contentType.includes('application/octet-stream')) {
-        setProgress('Processing compressed tracks...');
+        const audioFormat = response.headers.get('X-Audio-Format') || 'wav';
+        const mimeType = audioFormat === 'mp3' ? 'audio/mpeg' : 'audio/wav';
+        setProgress(`Processing ${audioFormat.toUpperCase()} tracks...`);
         
         const binaryData = await response.arrayBuffer();
         const view = new DataView(binaryData);
@@ -361,6 +363,7 @@ export function useVocalSeparation() {
         const vocalsSize = binaryData.byteLength - 4 - instrumentalSize;
         
         console.log('[VocalSeparation] Received binary tracks:', {
+          format: audioFormat,
           instrumentalSize: `${Math.round(instrumentalSize / 1024)}KB`,
           vocalsSize: vocalsSize > 0 ? `${Math.round(vocalsSize / 1024)}KB` : 'none',
           totalSize: `${Math.round(binaryData.byteLength / 1024)}KB`,
@@ -369,14 +372,14 @@ export function useVocalSeparation() {
         // Extract instrumental
         instrumentalBlob = new Blob(
           [new Uint8Array(binaryData, 4, instrumentalSize)],
-          { type: 'audio/wav' }
+          { type: mimeType }
         );
 
         // Extract vocals if present
         if (vocalsSize > 0) {
           vocalsBlob = new Blob(
             [new Uint8Array(binaryData, 4 + instrumentalSize, vocalsSize)],
-            { type: 'audio/wav' }
+            { type: mimeType }
           );
         }
       }
