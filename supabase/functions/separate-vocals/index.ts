@@ -11,9 +11,11 @@ const corsHeaders = {
 // Target compressed size per track (in bytes) - aim for ~1.2MB each to stay under 2.5MB total
 const TARGET_SIZE_BYTES = 1_200_000;
 
-// Use reliable Demucs-based spaces - Spleeter space was unreliable
-const PRIMARY_SPACE = "abidlabs/music-separation"; // Demucs v4 - stable, high quality
-const FALLBACK_SPACE = "r3gm/Audio_separator"; // Alternative Demucs - also stable
+// MP3-capable space (forked Demucs with --mp3 flag support)
+const MP3_SPACE = "ajparag/demucs-stem-separation"; // Forked - supports MP3 output
+// WAV-only fallbacks
+const WAV_SPACE_PRIMARY = "abidlabs/music-separation"; // Demucs v4 - stable, high quality
+const WAV_SPACE_FALLBACK = "r3gm/Audio_separator"; // Alternative Demucs - also stable
 
 // Retry with exponential backoff for HF cold starts
 async function connectWithRetry(spaceId: string, hfToken: string, maxRetries = 2): Promise<any> {
@@ -82,17 +84,23 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): P
   }
 }
 
-// Try primary space first, fall back to alternative if needed
-async function connectToFastestSpace(hfToken: string): Promise<any> {
+// Try MP3 space first, fall back to WAV spaces
+async function connectToMp3Space(hfToken: string): Promise<{ client: any; spaceId: string; isMp3: boolean }> {
   try {
-    return await connectWithRetry(PRIMARY_SPACE, hfToken, 2);
-  } catch (primaryError) {
-    console.log(`[separate-vocals] Primary space failed, trying fallback...`);
+    const { client, spaceId } = await connectWithRetry(MP3_SPACE, hfToken, 2);
+    return { client, spaceId, isMp3: true };
+  } catch (mp3Error) {
+    console.log(`[separate-vocals] MP3 space failed, trying WAV spaces...`);
     try {
-      return await connectWithRetry(FALLBACK_SPACE, hfToken, 2);
-    } catch (fallbackError) {
-      console.error(`[separate-vocals] All spaces failed`);
-      throw primaryError; // Throw original error
+      const { client, spaceId } = await connectWithRetry(WAV_SPACE_PRIMARY, hfToken, 2);
+      return { client, spaceId, isMp3: false };
+    } catch (_) {
+      try {
+        const { client, spaceId } = await connectWithRetry(WAV_SPACE_FALLBACK, hfToken, 2);
+        return { client, spaceId, isMp3: false };
+      } catch (fallbackError) {
+        throw mp3Error;
+      }
     }
   }
 }
@@ -243,17 +251,23 @@ async function processSeparation(audioBlob: Blob): Promise<Response> {
   let lastPredictError: unknown = null;
   let result: any = null;
   let usedSpaceId: string | null = null;
+  let isMp3Output = false;
 
   for (let attempt = 1; attempt <= maxPredictAttempts; attempt++) {
     try {
-      // Connect (primary, then fallback)
-      const { client, spaceId } = await connectToFastestSpace(HF_TOKEN);
+      // Connect (MP3 first, then WAV fallbacks)
+      const { client, spaceId, isMp3 } = await connectToMp3Space(HF_TOKEN);
       usedSpaceId = spaceId;
-      console.log(`[separate-vocals] Predict attempt ${attempt}/${maxPredictAttempts} using ${spaceId}...`);
+      isMp3Output = isMp3;
+      console.log(`[separate-vocals] Predict attempt ${attempt}/${maxPredictAttempts} using ${spaceId} (mp3: ${isMp3})...`);
 
-      // Call predict with a generous timeout (HF queues can be slow)
+      // Call predict - MP3 space accepts extra params
+      const predictArgs = isMp3
+        ? { audio: audioBlob, model_name: "htdemucs", vocals: false, mp3: true, mp3_bitrate: 160 }
+        : { audio: audioBlob };
+
       result = await withTimeout(
-        client.predict("/predict", { audio: audioBlob }),
+        client.predict("/predict", predictArgs),
         120_000,
         "HF /predict",
       );
@@ -268,7 +282,6 @@ async function processSeparation(audioBlob: Blob): Promise<Response> {
       );
 
       if (attempt < maxPredictAttempts) {
-        // Backoff: 1s, 2s
         const delay = Math.pow(2, attempt - 1) * 1000;
         console.log(`[separate-vocals] Retrying predict in ${delay}ms...`);
         await new Promise((resolve) => setTimeout(resolve, delay));
@@ -381,14 +394,15 @@ async function processSeparation(audioBlob: Blob): Promise<Response> {
     }
   }
 
-  // Download and compress both tracks to reduce client download size
-  console.log("[separate-vocals] Downloading and compressing tracks...");
+  // Download tracks - skip WAV compression if already MP3
+  const needsCompress = !isMp3Output;
+  console.log(`[separate-vocals] Downloading tracks... (mp3: ${isMp3Output}, compress: ${needsCompress})`);
   
   try {
     // Download tracks in parallel
     const [instrumentalBuffer, vocalsBuffer] = await Promise.all([
-      downloadAndCompress(instrumentalUrl, "instrumental"),
-      vocalsUrl ? downloadAndCompress(vocalsUrl, "vocals") : Promise.resolve(null),
+      needsCompress ? downloadAndCompress(instrumentalUrl, "instrumental") : downloadRaw(instrumentalUrl, "instrumental"),
+      vocalsUrl ? (needsCompress ? downloadAndCompress(vocalsUrl, "vocals") : downloadRaw(vocalsUrl, "vocals")) : Promise.resolve(null),
     ]);
 
     if (!instrumentalBuffer) {
@@ -414,6 +428,7 @@ async function processSeparation(audioBlob: Blob): Promise<Response> {
       headers: {
         ...corsHeaders,
         "Content-Type": "application/octet-stream",
+        "X-Audio-Format": isMp3Output ? "mp3" : "wav",
         "X-Instrumental-Size": instrumentalBuffer.byteLength.toString(),
         "X-Vocals-Size": (vocalsBuffer?.byteLength || 0).toString(),
         "X-Total-Size": totalSize.toString(),
@@ -431,6 +446,23 @@ async function processSeparation(audioBlob: Blob): Promise<Response> {
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
+  }
+}
+
+// Download audio from HF without compression (for MP3 output)
+async function downloadRaw(url: string, label: string): Promise<ArrayBuffer | null> {
+  try {
+    console.log(`[separate-vocals] Downloading ${label} (raw/mp3) from HF...`);
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Failed to download ${label}: ${response.status}`);
+    }
+    const buffer = await response.arrayBuffer();
+    console.log(`[separate-vocals] ${label} downloaded: ${Math.round(buffer.byteLength / 1024)}KB`);
+    return buffer;
+  } catch (error) {
+    console.error(`[separate-vocals] Failed to download ${label}:`, error);
+    throw error;
   }
 }
 
