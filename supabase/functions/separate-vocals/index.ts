@@ -1,5 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { Client } from "https://esm.sh/@gradio/client@1.8.0";
+import { Client, handle_file } from "https://esm.sh/@gradio/client@1.8.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -11,8 +11,8 @@ const corsHeaders = {
 // Target compressed size per track (in bytes) - aim for ~1.2MB each to stay under 2.5MB total
 const TARGET_SIZE_BYTES = 1_200_000;
 
-// MP3-capable space (forked Demucs with --mp3 flag support)
-const MP3_SPACE = "ajparag/demucs-stem-separation"; // Forked - supports MP3 output
+// AAC-capable space (forked MDX-NET with M4A output)
+const AAC_SPACE = "ajparag/demucs-stem-separation"; // Forked - outputs AAC/M4A
 // WAV-only fallbacks
 const WAV_SPACE_PRIMARY = "abidlabs/music-separation"; // Demucs v4 - stable, high quality
 const WAV_SPACE_FALLBACK = "r3gm/Audio_separator"; // Alternative Demucs - also stable
@@ -84,22 +84,22 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): P
   }
 }
 
-// Try MP3 space first, fall back to WAV spaces
-async function connectToMp3Space(hfToken: string): Promise<{ client: any; spaceId: string; isMp3: boolean }> {
+// Try AAC space first, fall back to WAV spaces
+async function connectToSpace(hfToken: string): Promise<{ client: any; spaceId: string; isAac: boolean }> {
   try {
-    const { client, spaceId } = await connectWithRetry(MP3_SPACE, hfToken, 2);
-    return { client, spaceId, isMp3: true };
-  } catch (mp3Error) {
-    console.log(`[separate-vocals] MP3 space failed, trying WAV spaces...`);
+    const { client, spaceId } = await connectWithRetry(AAC_SPACE, hfToken, 2);
+    return { client, spaceId, isAac: true };
+  } catch (aacError) {
+    console.log(`[separate-vocals] AAC space failed, trying WAV spaces...`);
     try {
       const { client, spaceId } = await connectWithRetry(WAV_SPACE_PRIMARY, hfToken, 2);
-      return { client, spaceId, isMp3: false };
+      return { client, spaceId, isAac: false };
     } catch (_) {
       try {
         const { client, spaceId } = await connectWithRetry(WAV_SPACE_FALLBACK, hfToken, 2);
-        return { client, spaceId, isMp3: false };
+        return { client, spaceId, isAac: false };
       } catch (fallbackError) {
-        throw mp3Error;
+        throw aacError;
       }
     }
   }
@@ -112,7 +112,7 @@ async function warmUpSpace(hfToken: string): Promise<boolean> {
     const startTime = Date.now();
     
     // Just try to connect - this wakes up the space
-    const client = await Client.connect(MP3_SPACE, {
+    const client = await Client.connect(AAC_SPACE, {
       hf_token: hfToken as `hf_${string}`,
     });
     
@@ -251,25 +251,26 @@ async function processSeparation(audioBlob: Blob): Promise<Response> {
   let lastPredictError: unknown = null;
   let result: any = null;
   let usedSpaceId: string | null = null;
-  let isMp3Output = false;
+  let isAacOutput = false;
 
   for (let attempt = 1; attempt <= maxPredictAttempts; attempt++) {
     try {
-      // Connect (MP3 first, then WAV fallbacks)
-      const { client, spaceId, isMp3 } = await connectToMp3Space(HF_TOKEN);
+      // Connect (AAC first, then WAV fallbacks)
+      const { client, spaceId, isAac } = await connectToSpace(HF_TOKEN);
       usedSpaceId = spaceId;
-      isMp3Output = isMp3;
-      console.log(`[separate-vocals] Predict attempt ${attempt}/${maxPredictAttempts} using ${spaceId} (mp3: ${isMp3})...`);
+      isAacOutput = isAac;
+      console.log(`[separate-vocals] Predict attempt ${attempt}/${maxPredictAttempts} using ${spaceId} (aac: ${isAac})...`);
 
-      // Call predict - MP3 space accepts extra params
-      const predictArgs = isMp3
-        ? { audio: audioBlob, model_name: "htdemucs", vocals: false, mp3: true, mp3_bitrate: 160 }
+      // AAC space: Blocks click handler with positional [input_audio] arg
+      // WAV spaces: /predict endpoint with {audio} named arg
+      const endpoint = isAac ? 0 : "/predict";
+      const predictArgs = isAac
+        ? [audioBlob]  // positional array for Blocks API
         : { audio: audioBlob };
-
       result = await withTimeout(
-        client.predict("/predict", predictArgs),
+        client.predict(endpoint, predictArgs),
         120_000,
-        "HF /predict",
+        "HF predict",
       );
 
       break; // success
@@ -346,19 +347,25 @@ async function processSeparation(audioBlob: Blob): Promise<Response> {
     }
     
     // Fallback: positional assignment if we found URLs but couldn't identify them
-    // Demucs typically outputs [vocals, no_vocals] or [no_vocals, vocals]
+    // AAC space (ajparag) outputs [vocals, instrumental]
+    // Demucs v4 typically outputs [no_vocals, vocals]
     if (data.length >= 2) {
       const getUrl = (item: any) => typeof item === 'string' ? item : item?.url;
       const url0 = getUrl(data[0]);
       const url1 = getUrl(data[1]);
       
       if (url0 && url1) {
-        // If we don't have both, try to assign based on position
         if (!instrumentalUrl || !vocalsUrl) {
-          // Demucs v4 typically: first = no_vocals/accompaniment, second = vocals
-          instrumentalUrl = instrumentalUrl || url0;
-          vocalsUrl = vocalsUrl || url1;
-          console.log("[separate-vocals] Using positional fallback - instrumental:", url0?.slice(0, 50), "vocals:", url1?.slice(0, 50));
+          if (isAacOutput) {
+            // AAC space: [vocals, instrumental]
+            vocalsUrl = vocalsUrl || url0;
+            instrumentalUrl = instrumentalUrl || url1;
+          } else {
+            // WAV spaces: [instrumental/no_vocals, vocals]
+            instrumentalUrl = instrumentalUrl || url0;
+            vocalsUrl = vocalsUrl || url1;
+          }
+          console.log("[separate-vocals] Using positional fallback - instrumental:", instrumentalUrl?.slice(0, 50), "vocals:", vocalsUrl?.slice(0, 50));
         }
       }
     }
@@ -394,9 +401,9 @@ async function processSeparation(audioBlob: Blob): Promise<Response> {
     }
   }
 
-  // Download tracks - skip WAV compression if already MP3
-  const needsCompress = !isMp3Output;
-  console.log(`[separate-vocals] Downloading tracks... (mp3: ${isMp3Output}, compress: ${needsCompress})`);
+  // Download tracks - skip WAV compression if already AAC
+  const needsCompress = !isAacOutput;
+  console.log(`[separate-vocals] Downloading tracks... (aac: ${isAacOutput}, compress: ${needsCompress})`);
   
   try {
     // Download tracks in parallel
@@ -428,7 +435,7 @@ async function processSeparation(audioBlob: Blob): Promise<Response> {
       headers: {
         ...corsHeaders,
         "Content-Type": "application/octet-stream",
-        "X-Audio-Format": isMp3Output ? "mp3" : "wav",
+        "X-Audio-Format": isAacOutput ? "aac" : "wav",
         "X-Instrumental-Size": instrumentalBuffer.byteLength.toString(),
         "X-Vocals-Size": (vocalsBuffer?.byteLength || 0).toString(),
         "X-Total-Size": totalSize.toString(),
