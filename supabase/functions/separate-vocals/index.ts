@@ -261,15 +261,14 @@ async function processSeparation(audioBlob: Blob): Promise<Response> {
       isAacOutput = isAac;
       console.log(`[separate-vocals] Predict attempt ${attempt}/${maxPredictAttempts} using ${spaceId} (aac: ${isAac})...`);
 
-      // AAC space: Blocks click handler with positional [input_audio] arg
-      // WAV spaces: /predict endpoint with {audio} named arg
-      const endpoint = isAac ? 0 : "/predict";
+      // Both spaces now use /predict endpoint
+      const endpoint = "/predict";
       const predictArgs = isAac
-        ? [audioBlob]  // positional array for Blocks API
+        ? [audioBlob]  // positional array for AAC space
         : { audio: audioBlob };
       result = await withTimeout(
         client.predict(endpoint, predictArgs),
-        120_000,
+        300_000,
         "HF predict",
       );
 
