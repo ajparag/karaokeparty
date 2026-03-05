@@ -354,7 +354,8 @@ export function useVocalSeparation() {
       // Handle binary blob response (preferred - no base64 overhead)
       if (contentType.includes('application/octet-stream')) {
         const audioFormat = response.headers.get('X-Audio-Format') || 'wav';
-        const mimeType = audioFormat === 'mp3' ? 'audio/mpeg' : 'audio/wav';
+        const mimeType = audioFormat === 'aac' ? 'audio/mp4' 
+          : audioFormat === 'mp3' ? 'audio/mpeg' : 'audio/wav';
         setProgress(`Processing ${audioFormat.toUpperCase()} tracks...`);
         
         const binaryData = await response.arrayBuffer();
