@@ -916,7 +916,7 @@ const Sing = () => {
       </header>
 
       {/* Loading Dialog - shows while loading from cache */}
-      <AlertDialog open={isLoadingFromCache || (!separatedAudio && isLoadingAudio && !!track)}>
+      <AlertDialog open={isLoadingFromCache || (isLoadingAudio && !!track)}>
         <AlertDialogContent className="max-w-sm">
           <AlertDialogHeader className="text-center">
             <div className="flex justify-center mb-4">
@@ -1129,7 +1129,7 @@ const Sing = () => {
             <Button
               size="lg"
               onClick={togglePlay}
-              disabled={!isPlayerReady || isLoadingFromCache || !separatedAudio}
+              disabled={!isPlayerReady || isLoadingFromCache}
               className="gradient-primary text-primary-foreground w-12 h-12 md:w-16 md:h-16 3xl:w-20 3xl:h-20 4xl:w-24 4xl:h-24 rounded-full disabled:opacity-50"
               title={!separatedAudio ? 'Waiting for AI separation...' : isPlaying ? 'Pause' : 'Play'}
             >
