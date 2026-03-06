@@ -11,3 +11,4 @@ verify_jwt = false
 
 [functions.separate-vocals]
 verify_jwt = false
+wall_clock_limit_ms = 300000
