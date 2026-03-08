@@ -211,9 +211,16 @@ const Sing = () => {
       timeSyncRafRef.current = requestAnimationFrame(tick);
     };
 
-    // Use AI-separated instrumental if available, otherwise original track
+    // Only use AI-separated instrumental - NO fallback to original track
     audio.crossOrigin = "anonymous";
-    audio.src = separatedAudio?.instrumentalUrl || track.audioUrl;
+    if (separatedAudio?.instrumentalUrl) {
+      audio.src = separatedAudio.instrumentalUrl;
+    } else {
+      // Don't set src yet - wait for separation to complete
+      console.log('[sing] Waiting for AI-separated instrumental...');
+      setIsLoadingAudio(false);
+      return;
+    }
     audio.preload = "auto";
 
     const onLoadedMetadata = () => {
