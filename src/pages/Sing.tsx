@@ -936,7 +936,7 @@ const Sing = () => {
               Loading your song...
             </AlertDialogTitle>
             <AlertDialogDescription className="text-base 2xl:text-lg 3xl:text-xl">
-              {cacheProgress || "Preparing the instrumental track for the best karaoke experience."}
+              {cacheProgress || (separatedAudio ? "Almost ready..." : "AI is separating vocals from the instrumental. This may take a few minutes...")}
             </AlertDialogDescription>
           </AlertDialogHeader>
         </AlertDialogContent>
