@@ -922,8 +922,8 @@ const Sing = () => {
         </div>
       </header>
 
-      {/* Loading Dialog - shows while loading from cache */}
-      <AlertDialog open={isLoadingFromCache || (isLoadingAudio && !!track)}>
+      {/* Loading Dialog - shows while waiting for AI separation */}
+      <AlertDialog open={isLoadingFromCache || (isLoadingAudio && !!track) || (!!track && !separatedAudio)}>
         <AlertDialogContent className="max-w-sm">
           <AlertDialogHeader className="text-center">
             <div className="flex justify-center mb-4">
