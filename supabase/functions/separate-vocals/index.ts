@@ -261,12 +261,11 @@ async function processSeparation(audioBlob: Blob): Promise<Response> {
       isAacOutput = isAac;
       console.log(`[separate-vocals] Predict attempt ${attempt}/${maxPredictAttempts} using ${spaceId} (aac: ${isAac})...`);
 
-      // Both spaces now use /predict endpoint - wrap blob with handle_file for Gradio
+      // Both spaces now use /predict endpoint
       const endpoint = "/predict";
-      const audioFile = handle_file(audioBlob);
       const predictArgs = isAac
-        ? [audioFile]  // positional array for AAC space
-        : { audio: audioFile };
+        ? [audioBlob]  // positional array for AAC space
+        : { audio: audioBlob };
       result = await withTimeout(
         client.predict(endpoint, predictArgs),
         300_000,
