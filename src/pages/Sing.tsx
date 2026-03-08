@@ -211,9 +211,16 @@ const Sing = () => {
       timeSyncRafRef.current = requestAnimationFrame(tick);
     };
 
-    // Use AI-separated instrumental if available, otherwise original track
+    // Only use AI-separated instrumental - NO fallback to original track
     audio.crossOrigin = "anonymous";
-    audio.src = separatedAudio?.instrumentalUrl || track.audioUrl;
+    if (separatedAudio?.instrumentalUrl) {
+      audio.src = separatedAudio.instrumentalUrl;
+    } else {
+      // Don't set src yet - wait for separation to complete
+      console.log('[sing] Waiting for AI-separated instrumental...');
+      setIsLoadingAudio(false);
+      return;
+    }
     audio.preload = "auto";
 
     const onLoadedMetadata = () => {
@@ -915,8 +922,8 @@ const Sing = () => {
         </div>
       </header>
 
-      {/* Loading Dialog - shows while loading from cache */}
-      <AlertDialog open={isLoadingFromCache || (isLoadingAudio && !!track)}>
+      {/* Loading Dialog - shows while waiting for AI separation */}
+      <AlertDialog open={isLoadingFromCache || (isLoadingAudio && !!track) || (!!track && !separatedAudio)}>
         <AlertDialogContent className="max-w-sm">
           <AlertDialogHeader className="text-center">
             <div className="flex justify-center mb-4">
@@ -929,7 +936,7 @@ const Sing = () => {
               Loading your song...
             </AlertDialogTitle>
             <AlertDialogDescription className="text-base 2xl:text-lg 3xl:text-xl">
-              {cacheProgress || "Preparing the instrumental track for the best karaoke experience."}
+              {cacheProgress || (separatedAudio ? "Almost ready..." : "AI is separating vocals from the instrumental. This may take a few minutes...")}
             </AlertDialogDescription>
           </AlertDialogHeader>
         </AlertDialogContent>
@@ -1129,7 +1136,7 @@ const Sing = () => {
             <Button
               size="lg"
               onClick={togglePlay}
-              disabled={!isPlayerReady || isLoadingFromCache}
+              disabled={!isPlayerReady || isLoadingFromCache || !separatedAudio}
               className="gradient-primary text-primary-foreground w-12 h-12 md:w-16 md:h-16 3xl:w-20 3xl:h-20 4xl:w-24 4xl:h-24 rounded-full disabled:opacity-50"
               title={!separatedAudio ? 'Waiting for AI separation...' : isPlaying ? 'Pause' : 'Play'}
             >

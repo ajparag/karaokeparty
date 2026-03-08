@@ -262,10 +262,12 @@ async function processSeparation(audioBlob: Blob): Promise<Response> {
       console.log(`[separate-vocals] Predict attempt ${attempt}/${maxPredictAttempts} using ${spaceId} (aac: ${isAac})...`);
 
       // Both spaces now use /predict endpoint
+      // CRITICAL: wrap blob in handle_file() so Gradio uploads it correctly
+      const wrappedAudio = handle_file(audioBlob);
       const endpoint = "/predict";
       const predictArgs = isAac
-        ? [audioBlob]  // positional array for AAC space
-        : { audio: audioBlob };
+        ? [wrappedAudio]  // positional array for AAC space
+        : { audio: wrappedAudio };
       result = await withTimeout(
         client.predict(endpoint, predictArgs),
         300_000,
