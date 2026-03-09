@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
+import { Client, handle_file } from '@gradio/client';
 import { supabase } from '@/integrations/supabase/client';
 import { getCachedTracks, saveCachedTracks, clearOldCache } from '@/lib/audioCache';
 
@@ -15,6 +16,10 @@ const PREFETCH_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 // Track if HF space has been warmed up this session
 let hfSpaceWarmedUp = false;
 let hfWarmUpPromise: Promise<void> | null = null;
+
+// HF spaces
+const AAC_SPACE = "ajparag/demucs-stem-separation";
+const WAV_SPACE_PRIMARY = "abidlabs/music-separation";
 
 // Warm up HuggingFace space proactively (non-blocking, singleton)
 export async function warmUpHFSpace(): Promise<void> {
@@ -43,10 +48,8 @@ export async function warmUpHFSpace(): Promise<void> {
 
 // Prefetch audio in background (called on track hover/click)
 export async function prefetchAudio(audioUrl: string): Promise<void> {
-  // Start warming up HF space in parallel
   warmUpHFSpace();
 
-  // Already prefetched recently?
   const cached = audioPrefetchCache.get(audioUrl);
   if (cached && Date.now() - cached.timestamp < PREFETCH_CACHE_TTL) {
     return;
@@ -67,15 +70,13 @@ export async function prefetchAudio(audioUrl: string): Promise<void> {
 
 // Get prefetched audio or download fresh
 async function getAudioBlob(audioUrl: string): Promise<Blob> {
-  // Check prefetch cache first
   const cached = audioPrefetchCache.get(audioUrl);
   if (cached && Date.now() - cached.timestamp < PREFETCH_CACHE_TTL) {
     console.log('[VocalSeparation] Using prefetched audio');
-    audioPrefetchCache.delete(audioUrl); // Clean up after use
+    audioPrefetchCache.delete(audioUrl);
     return cached.blob;
   }
 
-  // Download fresh
   console.log('[VocalSeparation] Downloading audio...');
   const response = await fetch(audioUrl);
   if (!response.ok) {
@@ -84,189 +85,81 @@ async function getAudioBlob(audioUrl: string): Promise<Blob> {
   return response.blob();
 }
 
-// Compress audio using Web Audio API to reduce upload size
-async function compressAudio(audioBlob: Blob): Promise<Blob> {
+// Connect to HF space with retry
+async function connectToHFSpace(): Promise<{ client: any; spaceId: string; isAac: boolean }> {
+  // Try AAC space first
   try {
-    // Only compress if larger than 1MB
-    if (audioBlob.size < 1 * 1024 * 1024) {
-      console.log('[VocalSeparation] Audio small enough, skipping compression');
-      return audioBlob;
-    }
-
-    console.log('[VocalSeparation] Compressing audio...', Math.round(audioBlob.size / 1024), 'KB');
-    
-    // Create audio context
-    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-    
-    // Decode the audio
-    const arrayBuffer = await audioBlob.arrayBuffer();
-    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-    
-    // Calculate target sample rate (downsample to 16000 Hz for faster upload/processing)
-    const targetSampleRate = Math.min(16000, audioBuffer.sampleRate);
-    
-    // Create offline context for resampling
-    const offlineContext = new OfflineAudioContext(
-      1, // Mono for smaller size
-      Math.ceil(audioBuffer.duration * targetSampleRate),
-      targetSampleRate
-    );
-    
-    // Create buffer source
-    const source = offlineContext.createBufferSource();
-    
-    // Mix down to mono if stereo
-    const monoBuffer = offlineContext.createBuffer(
-      1,
-      audioBuffer.length,
-      audioBuffer.sampleRate
-    );
-    const monoData = monoBuffer.getChannelData(0);
-    
-    if (audioBuffer.numberOfChannels === 2) {
-      const left = audioBuffer.getChannelData(0);
-      const right = audioBuffer.getChannelData(1);
-      for (let i = 0; i < monoData.length; i++) {
-        monoData[i] = (left[i] + right[i]) / 2;
-      }
-    } else {
-      monoData.set(audioBuffer.getChannelData(0));
-    }
-    
-    source.buffer = monoBuffer;
-    source.connect(offlineContext.destination);
-    source.start();
-    
-    // Render the resampled audio
-    const renderedBuffer = await offlineContext.startRendering();
-    
-    // Convert to WAV (simple, no complex encoding needed)
-    const wavBlob = audioBufferToWav(renderedBuffer);
-    
-    await audioContext.close();
-    
-    console.log('[VocalSeparation] Compressed to:', Math.round(wavBlob.size / 1024), 'KB',
-      `(${Math.round((1 - wavBlob.size / audioBlob.size) * 100)}% reduction)`);
-    
-    return wavBlob;
+    console.log('[VocalSeparation] Connecting to', AAC_SPACE);
+    const client = await Client.connect(AAC_SPACE);
+    console.log('[VocalSeparation] Connected to AAC space');
+    return { client, spaceId: AAC_SPACE, isAac: true };
   } catch (err) {
-    console.warn('[VocalSeparation] Compression failed, using original:', err);
-    return audioBlob;
+    console.warn('[VocalSeparation] AAC space failed, trying WAV fallback:', err);
+  }
+
+  // Fallback to WAV space
+  try {
+    console.log('[VocalSeparation] Connecting to', WAV_SPACE_PRIMARY);
+    const client = await Client.connect(WAV_SPACE_PRIMARY);
+    console.log('[VocalSeparation] Connected to WAV space');
+    return { client, spaceId: WAV_SPACE_PRIMARY, isAac: false };
+  } catch (err) {
+    throw new Error('Failed to connect to any HF space');
   }
 }
 
-// Convert AudioBuffer to WAV blob
-function audioBufferToWav(buffer: AudioBuffer): Blob {
-  const numChannels = buffer.numberOfChannels;
-  const sampleRate = buffer.sampleRate;
-  const format = 1; // PCM
-  const bitDepth = 16;
-  
-  const bytesPerSample = bitDepth / 8;
-  const blockAlign = numChannels * bytesPerSample;
-  
-  const samples = buffer.getChannelData(0);
-  const dataLength = samples.length * bytesPerSample;
-  const bufferLength = 44 + dataLength;
-  
-  const arrayBuffer = new ArrayBuffer(bufferLength);
-  const view = new DataView(arrayBuffer);
-  
-  // WAV header
-  writeString(view, 0, 'RIFF');
-  view.setUint32(4, bufferLength - 8, true);
-  writeString(view, 8, 'WAVE');
-  writeString(view, 12, 'fmt ');
-  view.setUint32(16, 16, true);
-  view.setUint16(20, format, true);
-  view.setUint16(22, numChannels, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * blockAlign, true);
-  view.setUint16(32, blockAlign, true);
-  view.setUint16(34, bitDepth, true);
-  writeString(view, 36, 'data');
-  view.setUint32(40, dataLength, true);
-  
-  // Convert float samples to 16-bit PCM
-  let offset = 44;
-  for (let i = 0; i < samples.length; i++) {
-    const sample = Math.max(-1, Math.min(1, samples[i]));
-    view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
-    offset += 2;
-  }
-  
-  return new Blob([arrayBuffer], { type: 'audio/wav' });
-}
+// Parse separation result from HF space
+function parseHFResult(data: any, isAac: boolean): { instrumentalUrl: string | null; vocalsUrl: string | null } {
+  let instrumentalUrl: string | null = null;
+  let vocalsUrl: string | null = null;
 
-function writeString(view: DataView, offset: number, string: string) {
-  for (let i = 0; i < string.length; i++) {
-    view.setUint8(offset + i, string.charCodeAt(i));
-  }
-}
+  if (Array.isArray(data)) {
+    for (const item of data) {
+      if (item && typeof item === 'object') {
+        const url = item.url as string;
+        const origName = (item.orig_name || item.path || '').toLowerCase();
+        const checkString = origName || (url || '').toLowerCase();
 
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string, onTimeout?: () => void): Promise<T> {
-  let timeoutId: number | undefined;
-  const timeout = new Promise<never>((_resolve, reject) => {
-    timeoutId = window.setTimeout(() => {
-      try {
-        onTimeout?.();
-      } finally {
-        reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`));
-      }
-    }, ms);
-  });
-
-  return Promise.race([promise, timeout]).finally(() => {
-    if (timeoutId != null) window.clearTimeout(timeoutId);
-  });
-}
-
-async function downloadWithStreaming(url: string, opts?: { timeoutMs?: number; label?: string }): Promise<Blob> {
-  const timeoutMs = opts?.timeoutMs ?? 90_000;
-  const label = opts?.label ?? 'download';
-
-  const controller = new AbortController();
-  const downloadPromise = (async () => {
-    const response = await fetch(url, {
-      signal: controller.signal,
-      // HF can be finicky with caching/redirects; these hints reduce “stuck” fetches.
-      cache: 'no-store',
-      redirect: 'follow',
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to download (${response.status}): ${response.statusText}`);
-    }
-
-    // Use streaming if available; otherwise fall back to blob.
-    if (response.body) {
-      const reader = response.body.getReader();
-      const chunks: Uint8Array[] = [];
-      let total = 0;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (value) {
-          chunks.push(value);
-          total += value.length;
+        if (checkString.includes('no_vocals') || checkString.includes('no-vocals') ||
+            checkString.includes('instrumental') || checkString.includes('accompaniment') ||
+            checkString.includes('other') || checkString.includes('music')) {
+          instrumentalUrl = url;
+        } else if (checkString.includes('vocals') || checkString.includes('voice')) {
+          vocalsUrl = url;
         }
       }
-
-      const result = new Uint8Array(total);
-      let offset = 0;
-      for (const chunk of chunks) {
-        result.set(chunk, offset);
-        offset += chunk.length;
-      }
-
-      return new Blob([result]);
     }
 
-    return await response.blob();
-  })();
+    // Positional fallback
+    if (data.length >= 2 && (!instrumentalUrl || !vocalsUrl)) {
+      const getUrl = (item: any) => typeof item === 'string' ? item : item?.url;
+      const url0 = getUrl(data[0]);
+      const url1 = getUrl(data[1]);
+      if (url0 && url1) {
+        if (isAac) {
+          vocalsUrl = vocalsUrl || url0;
+          instrumentalUrl = instrumentalUrl || url1;
+        } else {
+          instrumentalUrl = instrumentalUrl || url0;
+          vocalsUrl = vocalsUrl || url1;
+        }
+      }
+    }
+  }
 
-  return withTimeout(downloadPromise, timeoutMs, label, () => controller.abort());
+  return { instrumentalUrl, vocalsUrl };
+}
+
+// Download a track from HF URL
+async function downloadTrack(url: string, label: string): Promise<Blob> {
+  console.log(`[VocalSeparation] Downloading ${label}...`);
+  const response = await fetch(url, { cache: 'no-store', redirect: 'follow' });
+  if (!response.ok) {
+    throw new Error(`Failed to download ${label}: ${response.status}`);
+  }
+  const blob = await response.blob();
+  console.log(`[VocalSeparation] ${label} downloaded: ${Math.round(blob.size / 1024)}KB`);
+  return blob;
 }
 
 export function useVocalSeparation() {
@@ -284,7 +177,7 @@ export function useVocalSeparation() {
     abortControllerRef.current = new AbortController();
 
     try {
-      // Clear old cache entries in background (non-blocking)
+      // Clear old cache entries in background
       clearOldCache(7).catch(console.error);
 
       // Check IndexedDB cache first
@@ -293,154 +186,87 @@ export function useVocalSeparation() {
         setProgress('Loading from cache...');
         const instrumentalUrl = URL.createObjectURL(cached.instrumentalBlob);
         const vocalsUrl = cached.vocalsBlob ? URL.createObjectURL(cached.vocalsBlob) : undefined;
-        
-        const result: SeparationResult = {
-          instrumentalUrl,
-          vocalsUrl,
-          fromCache: true,
-        };
-        
+
+        const result: SeparationResult = { instrumentalUrl, vocalsUrl, fromCache: true };
         setSeparatedAudio(result);
         setProgress('');
         setIsProcessing(false);
         return result;
       }
 
+      // === CLIENT-SIDE SEPARATION via @gradio/client ===
       setProgress('Preparing audio...');
-
-      // Get audio blob (from prefetch cache or fresh download)
       const audioBlob = await getAudioBlob(audioUrl);
-      
-      // Skip client-side compression - it converts compressed AAC to uncompressed WAV
-      // which actually increases file size. Send original AAC directly to HuggingFace.
-      console.log('[VocalSeparation] Uploading original audio:', Math.round(audioBlob.size / 1024), 'KB');
-      
-      setProgress(`Uploading (${Math.round(audioBlob.size / 1024)}KB)...`);
+      console.log('[VocalSeparation] Audio size:', Math.round(audioBlob.size / 1024), 'KB');
 
-      // Use FormData for streaming upload (no base64 overhead!)
-      const formData = new FormData();
-      // Determine file extension from blob type
-      const extension = audioBlob.type.includes('wav') ? 'audio.wav' 
-        : audioBlob.type.includes('mp4') || audioBlob.type.includes('m4a') ? 'audio.m4a'
-        : audioBlob.type.includes('mpeg') ? 'audio.mp3'
-        : 'audio.mp4';
-      formData.append('audio', audioBlob, extension);
-      
-      setProgress('AI vocal separation...');
-      
-      // Call edge function with FormData - use fetch directly to handle binary response
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-      const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-      
-      const response = await fetch(`${supabaseUrl}/functions/v1/separate-vocals`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${supabaseKey}`,
-          'apikey': supabaseKey,
-        },
-        body: formData,
-      });
+      setProgress('Connecting to AI model...');
+      const { client, spaceId, isAac } = await connectToHFSpace();
+      console.log('[VocalSeparation] Connected to', spaceId, '(aac:', isAac, ')');
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Separation failed: ${response.status} - ${errorText}`);
+      setProgress('AI vocal separation (this may take 3-5 min)...');
+
+      // Wrap blob in handle_file for Gradio upload
+      const wrappedAudio = handle_file(audioBlob);
+      const predictArgs = isAac ? [wrappedAudio] : { audio: wrappedAudio };
+
+      console.log('[VocalSeparation] Starting predict on', spaceId);
+      const result = await client.predict("/predict", predictArgs);
+      console.log('[VocalSeparation] Predict complete!', result);
+
+      const data = result.data as any;
+      console.log('[VocalSeparation] Result data:', JSON.stringify(data, null, 2).slice(0, 500));
+
+      const { instrumentalUrl: instUrl, vocalsUrl: vocUrl } = parseHFResult(data, isAac);
+
+      if (!instUrl) {
+        // Last resort: use first URL
+        const firstUrl = Array.isArray(data) && data.length > 0
+          ? (typeof data[0] === 'string' ? data[0] : data[0]?.url)
+          : null;
+        if (!firstUrl) {
+          throw new Error('Could not find instrumental track in result');
+        }
+        console.warn('[VocalSeparation] Using first URL as instrumental fallback');
       }
 
-      let instrumentalBlob: Blob;
-      let vocalsBlob: Blob | undefined;
+      const finalInstUrl = instUrl || (Array.isArray(data) ? (typeof data[0] === 'string' ? data[0] : data[0]?.url) : null);
+      if (!finalInstUrl) throw new Error('No instrumental URL found');
 
-      const contentType = response.headers.get('Content-Type') || '';
-      
-      // Handle binary blob response (preferred - no base64 overhead)
-      if (contentType.includes('application/octet-stream')) {
-        const audioFormat = response.headers.get('X-Audio-Format') || 'wav';
-        const mimeType = audioFormat === 'aac' ? 'audio/mp4' 
-          : audioFormat === 'mp3' ? 'audio/mpeg' : 'audio/wav';
-        setProgress(`Processing ${audioFormat.toUpperCase()} tracks...`);
-        
-        const binaryData = await response.arrayBuffer();
-        const view = new DataView(binaryData);
-        const instrumentalSize = view.getUint32(0, true); // little-endian
-        const vocalsSize = binaryData.byteLength - 4 - instrumentalSize;
-        
-        console.log('[VocalSeparation] Received binary tracks:', {
-          format: audioFormat,
-          instrumentalSize: `${Math.round(instrumentalSize / 1024)}KB`,
-          vocalsSize: vocalsSize > 0 ? `${Math.round(vocalsSize / 1024)}KB` : 'none',
-          totalSize: `${Math.round(binaryData.byteLength / 1024)}KB`,
-        });
+      setProgress('Downloading separated tracks...');
 
-        // Extract instrumental
-        instrumentalBlob = new Blob(
-          [new Uint8Array(binaryData, 4, instrumentalSize)],
-          { type: mimeType }
-        );
+      // Download tracks in parallel
+      const [instrumentalBlob, vocalsBlob] = await Promise.all([
+        downloadTrack(finalInstUrl, 'instrumental'),
+        vocUrl ? downloadTrack(vocUrl, 'vocals').catch(e => {
+          console.warn('[VocalSeparation] Vocals download failed:', e);
+          return undefined;
+        }) : Promise.resolve(undefined),
+      ]);
 
-        // Extract vocals if present
-        if (vocalsSize > 0) {
-          vocalsBlob = new Blob(
-            [new Uint8Array(binaryData, 4 + instrumentalSize, vocalsSize)],
-            { type: mimeType }
-          );
-        }
-      }
-      // Handle JSON response (fallback mode with URLs)
-      else {
-        const data = await response.json();
-        
-        if (!data?.success) {
-          throw new Error(data?.error || 'Separation failed');
-        }
+      // Create object URLs for playback
+      const instrumentalObjUrl = URL.createObjectURL(instrumentalBlob);
+      const vocalsObjUrl = vocalsBlob ? URL.createObjectURL(vocalsBlob) : undefined;
 
-        if (!data.instrumentalUrl) {
-          throw new Error('No audio data in response');
-        }
-
-        setProgress('Downloading tracks...');
-
-        // Download both tracks in PARALLEL for speed.
-        const instrumentalPromise = downloadWithStreaming(data.instrumentalUrl, {
-          label: 'Instrumental download',
-          timeoutMs: 90_000,
-        });
-
-        const vocalsPromise = data.vocalsUrl
-          ? downloadWithStreaming(data.vocalsUrl, {
-              label: 'Vocals download',
-              timeoutMs: 90_000,
-            }).catch((e) => {
-              console.warn('[VocalSeparation] Vocals download failed; continuing instrumental-only:', e);
-              return undefined;
-            })
-          : Promise.resolve(undefined);
-
-        [instrumentalBlob, vocalsBlob] = await Promise.all([instrumentalPromise, vocalsPromise]) as [Blob, Blob | undefined];
-      }
-
-      // Create object URLs immediately for playback
-      const instrumentalUrl = URL.createObjectURL(instrumentalBlob);
-      const vocalsUrl = vocalsBlob ? URL.createObjectURL(vocalsBlob) : undefined;
-
-      const result: SeparationResult = {
-        instrumentalUrl,
-        vocalsUrl,
+      const separationResult: SeparationResult = {
+        instrumentalUrl: instrumentalObjUrl,
+        vocalsUrl: vocalsObjUrl,
         fromCache: false,
       };
 
-      // Set result immediately so playback can start
-      setSeparatedAudio(result);
+      setSeparatedAudio(separationResult);
       setProgress('');
       setIsProcessing(false);
 
-      // Save to IndexedDB in background (non-blocking) - don't wait for this
+      // Cache in background
       saveCachedTracks(audioUrl, instrumentalBlob, vocalsBlob)
         .then(() => console.log('[VocalSeparation] Cached tracks saved'))
-        .catch((err) => console.error('[VocalSeparation] Failed to cache tracks:', err));
+        .catch((err) => console.error('[VocalSeparation] Failed to cache:', err));
 
-      return result;
+      return separationResult;
 
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
+      console.error('[VocalSeparation] Error:', message, err);
       setError(message);
       setProgress('');
       setIsProcessing(false);
