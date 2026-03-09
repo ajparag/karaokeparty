@@ -15,4 +15,8 @@ export default defineConfig(({ mode }) => ({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  define: {
+    // Polyfill for @gradio/client which uses Buffer (Node.js API)
+    global: "globalThis",
+  },
 }));
