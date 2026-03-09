@@ -1,0 +1,31 @@
+name: Gemini Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Gemini Code Review
+        uses: google-github-actions/review-pull-request@v1
+        with:
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          model: "gemini-1.5-pro"
+          # Optional: Tell Gemini what to focus on
+          custom_prompt: |
+            Please review the following code changes for:
+            1. Potential bugs or edge cases.
+            2. Performance improvements.
+            3. Readability and best practices.
+            Keep the tone helpful and concise.
