@@ -273,6 +273,12 @@ export function useVocalSeparation() {
       const instrumentalObjUrl = URL.createObjectURL(instrumentalBlob);
       const vocalsObjUrl = vocalsBlob ? URL.createObjectURL(vocalsBlob) : undefined;
 
+      const totalElapsed = Date.now() - separationStartTime;
+      console.log('[VocalSeparation] === SEPARATION COMPLETE ===');
+      console.log('[VocalSeparation] Total time:', Math.round(totalElapsed / 1000), 'seconds');
+      console.log('[VocalSeparation] Instrumental blob URL:', instrumentalObjUrl);
+      console.log('[VocalSeparation] Vocals blob URL:', vocalsObjUrl || 'none');
+
       const separationResult: SeparationResult = {
         instrumentalUrl: instrumentalObjUrl,
         vocalsUrl: vocalsObjUrl,
