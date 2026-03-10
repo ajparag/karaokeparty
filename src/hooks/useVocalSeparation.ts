@@ -195,13 +195,20 @@ export function useVocalSeparation() {
       }
 
       // === CLIENT-SIDE SEPARATION via @gradio/client ===
+      const separationStartTime = Date.now();
       setProgress('Preparing audio...');
       const audioBlob = await getAudioBlob(audioUrl);
-      console.log('[VocalSeparation] Audio size:', Math.round(audioBlob.size / 1024), 'KB');
+      console.log('[VocalSeparation] === UPLOAD INFO ===');
+      console.log('[VocalSeparation] Audio blob size:', Math.round(audioBlob.size / 1024), 'KB', `(${audioBlob.size} bytes)`);
+      console.log('[VocalSeparation] Audio blob type:', audioBlob.type || 'unknown');
+      console.log('[VocalSeparation] Audio URL:', audioUrl.slice(0, 100));
+      const urlExt = audioUrl.split('?')[0].split('.').pop();
+      console.log('[VocalSeparation] URL extension:', urlExt);
 
       setProgress('Connecting to AI model...');
+      const connectStart = Date.now();
       const { client, spaceId, isAac } = await connectToHFSpace();
-      console.log('[VocalSeparation] Connected to', spaceId, '(aac:', isAac, ')');
+      console.log('[VocalSeparation] Connected to', spaceId, 'in', Date.now() - connectStart, 'ms (aac:', isAac, ')');
 
       setProgress('AI vocal separation (this may take 3-5 min)...');
 
@@ -209,12 +216,27 @@ export function useVocalSeparation() {
       const wrappedAudio = handle_file(audioBlob);
       const predictArgs = isAac ? [wrappedAudio] : { audio: wrappedAudio };
 
-      console.log('[VocalSeparation] Starting predict on', spaceId);
-      const result = await client.predict("/predict", predictArgs);
-      console.log('[VocalSeparation] Predict complete!', result);
+      console.log('[VocalSeparation] Starting predict on', spaceId, 'at', new Date().toISOString());
+      const predictStart = Date.now();
+      
+      // Add timeout race
+      const PREDICT_TIMEOUT = 6 * 60 * 1000; // 6 minutes
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error(`Predict timed out after ${PREDICT_TIMEOUT / 1000}s`)), PREDICT_TIMEOUT)
+      );
+      
+      const result = await Promise.race([
+        client.predict("/predict", predictArgs),
+        timeoutPromise,
+      ]) as any;
+      
+      const predictElapsed = Date.now() - predictStart;
+      console.log('[VocalSeparation] Predict complete in', Math.round(predictElapsed / 1000), 'seconds');
 
       const data = result.data as any;
-      console.log('[VocalSeparation] Result data:', JSON.stringify(data, null, 2).slice(0, 500));
+      console.log('[VocalSeparation] === RESULT INFO ===');
+      console.log('[VocalSeparation] Result data type:', typeof data, Array.isArray(data) ? `(array of ${data.length})` : '');
+      console.log('[VocalSeparation] Result data:', JSON.stringify(data, null, 2).slice(0, 1000));
 
       const { instrumentalUrl: instUrl, vocalsUrl: vocUrl } = parseHFResult(data, isAac);
 
