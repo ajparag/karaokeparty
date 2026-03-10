@@ -152,13 +152,17 @@ function parseHFResult(data: any, isAac: boolean): { instrumentalUrl: string | n
 
 // Download a track from HF URL
 async function downloadTrack(url: string, label: string): Promise<Blob> {
-  console.log(`[VocalSeparation] Downloading ${label}...`);
+  console.log(`[VocalSeparation] Downloading ${label} from:`, url.slice(0, 120));
   const response = await fetch(url, { cache: 'no-store', redirect: 'follow' });
   if (!response.ok) {
     throw new Error(`Failed to download ${label}: ${response.status}`);
   }
+  const contentType = response.headers.get('content-type');
   const blob = await response.blob();
-  console.log(`[VocalSeparation] ${label} downloaded: ${Math.round(blob.size / 1024)}KB`);
+  console.log(`[VocalSeparation] === ${label.toUpperCase()} DOWNLOAD ===`);
+  console.log(`[VocalSeparation] ${label} size: ${Math.round(blob.size / 1024)}KB (${blob.size} bytes)`);
+  console.log(`[VocalSeparation] ${label} content-type: ${contentType}`);
+  console.log(`[VocalSeparation] ${label} blob.type: ${blob.type}`);
   return blob;
 }
 
