@@ -164,31 +164,8 @@ const Sing = () => {
   // IMPORTANT: Only call once per track to avoid duplicate processing.
   const separationTriggeredRef = useRef<string | null>(null);
   useEffect(() => {
-    if (isTestPlayerMode && track?.audioUrl && !separatedAudio) {
-      // In test mode, proxy the original AAC file as "instrumental" to test player compatibility
-      const proxyUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/proxy-audio?url=${encodeURIComponent(track.audioUrl)}`;
-      console.log('[sing][TEST MODE] Bypassing HF separation, using original AAC via proxy:', proxyUrl);
-      // Manually set separatedAudio by calling loadFromCache with a fake result
-      // Instead, we'll create a blob URL from the proxied audio
-      fetch(proxyUrl)
-        .then(r => {
-          console.log('[sing][TEST MODE] Proxy response:', r.status, r.headers.get('content-type'));
-          return r.blob();
-        })
-        .then(blob => {
-          console.log('[sing][TEST MODE] Audio blob:', Math.round(blob.size / 1024), 'KB, type:', blob.type);
-          const url = URL.createObjectURL(blob);
-          // Directly set the audio source via the hook isn't possible, so we'll use a ref hack
-          (window as any).__testInstrumentalUrl = url;
-          // Force re-render by triggering the separation result
-          loadFromCache(track.audioUrl);
-        })
-        .catch(err => console.error('[sing][TEST MODE] Failed:', err));
-      return;
-    }
-
+    if (isTestPlayerMode) return; // Skip separation in test mode
     if (track?.audioUrl && !separatedAudio && !isLoadingFromCache) {
-      // Prevent duplicate calls for the same track
       if (separationTriggeredRef.current === track.audioUrl) return;
       separationTriggeredRef.current = track.audioUrl;
 
