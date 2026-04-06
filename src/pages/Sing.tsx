@@ -295,7 +295,7 @@ const Sing = () => {
       audioRef.current = null;
       stopAnalysis();
     };
-  }, [track?.audioUrl, toast, stopAnalysis, separatedAudio?.instrumentalUrl]);
+  }, [track?.audioUrl, toast, stopAnalysis, separatedAudio?.instrumentalUrl, isTestPlayerMode]);
 
   // Setup vocals audio when separated audio is available
   useEffect(() => {
