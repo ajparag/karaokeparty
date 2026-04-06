@@ -216,7 +216,12 @@ const Sing = () => {
 
     // Only use AI-separated instrumental - NO fallback to original track
     audio.crossOrigin = "anonymous";
-    if (separatedAudio?.instrumentalUrl) {
+    if (isTestPlayerMode && track?.audioUrl) {
+      // TEST MODE: use original AAC via proxy to test player compatibility
+      const proxyUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/proxy-audio?url=${encodeURIComponent(track.audioUrl)}`;
+      audio.src = proxyUrl;
+      console.log('[sing][TEST MODE] Playing original AAC via proxy');
+    } else if (separatedAudio?.instrumentalUrl) {
       audio.src = separatedAudio.instrumentalUrl;
     } else {
       // Don't set src yet - wait for separation to complete
