@@ -157,12 +157,15 @@ const Sing = () => {
     }
   }, [trackId, navigate, toast]);
 
+  // TEST MODE: ?testPlayer=1 bypasses HF separation and uses original AAC for player testing
+  const isTestPlayerMode = new URLSearchParams(window.location.search).has('testPlayer');
+
   // Load separated audio from IndexedDB cache (separation already happened on Index page).
   // IMPORTANT: Only call once per track to avoid duplicate processing.
   const separationTriggeredRef = useRef<string | null>(null);
   useEffect(() => {
+    if (isTestPlayerMode) return; // Skip separation in test mode
     if (track?.audioUrl && !separatedAudio && !isLoadingFromCache) {
-      // Prevent duplicate calls for the same track
       if (separationTriggeredRef.current === track.audioUrl) return;
       separationTriggeredRef.current = track.audioUrl;
 
@@ -172,7 +175,7 @@ const Sing = () => {
         }
       });
     }
-  }, [track?.audioUrl, separatedAudio, isLoadingFromCache, loadFromCache]);
+  }, [track?.audioUrl, separatedAudio, isLoadingFromCache, loadFromCache, isTestPlayerMode]);
 
   // Initialize HTML5 Audio Player - Demucs instrumental or fallback to original
   useEffect(() => {
@@ -213,7 +216,12 @@ const Sing = () => {
 
     // Only use AI-separated instrumental - NO fallback to original track
     audio.crossOrigin = "anonymous";
-    if (separatedAudio?.instrumentalUrl) {
+    if (isTestPlayerMode && track?.audioUrl) {
+      // TEST MODE: use original AAC via proxy to test player compatibility
+      const proxyUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/proxy-audio?url=${encodeURIComponent(track.audioUrl)}`;
+      audio.src = proxyUrl;
+      console.log('[sing][TEST MODE] Playing original AAC via proxy');
+    } else if (separatedAudio?.instrumentalUrl) {
       audio.src = separatedAudio.instrumentalUrl;
     } else {
       // Don't set src yet - wait for separation to complete
@@ -287,7 +295,7 @@ const Sing = () => {
       audioRef.current = null;
       stopAnalysis();
     };
-  }, [track?.audioUrl, toast, stopAnalysis, separatedAudio?.instrumentalUrl]);
+  }, [track?.audioUrl, toast, stopAnalysis, separatedAudio?.instrumentalUrl, isTestPlayerMode]);
 
   // Setup vocals audio when separated audio is available
   useEffect(() => {
@@ -923,7 +931,7 @@ const Sing = () => {
       </header>
 
       {/* Loading Dialog - shows while waiting for AI separation */}
-      <AlertDialog open={isLoadingFromCache || (isLoadingAudio && !!track) || (!!track && !separatedAudio)}>
+      <AlertDialog open={!isTestPlayerMode && (isLoadingFromCache || (isLoadingAudio && !!track) || (!!track && !separatedAudio))}>
         <AlertDialogContent className="max-w-sm">
           <AlertDialogHeader className="text-center">
             <div className="flex justify-center mb-4">
