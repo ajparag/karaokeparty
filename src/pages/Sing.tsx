@@ -220,12 +220,11 @@ const Sing = () => {
       audio.src = separatedAudio.instrumentalUrl;
       console.log('[sing] Using AI-separated instrumental');
     } else if (track?.audioUrl) {
-      // Fallback: download original AAC as blob for player testing
-      console.log('[sing] Downloading original AAC as blob for playback test...');
-      const proxyUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/proxy-audio?url=${encodeURIComponent(track.audioUrl)}`;
-      fetch(proxyUrl)
+      // Fallback: download original AAC directly as blob
+      console.log('[sing] Downloading original audio as blob...');
+      fetch(track.audioUrl)
         .then(r => {
-          console.log('[sing] Proxy response:', r.status, r.headers.get('content-type'));
+          console.log('[sing] Audio fetch response:', r.status, r.headers.get('content-type'));
           return r.blob();
         })
         .then(blob => {
@@ -236,11 +235,22 @@ const Sing = () => {
           audio.load();
         })
         .catch(err => {
-          console.error('[sing] Failed to download audio:', err);
-          if (isMounted) {
-            setIsLoadingAudio(false);
-            toast({ title: "Audio error", description: "Failed to load audio.", variant: "destructive" });
-          }
+          console.error('[sing] Audio download failed, trying proxy...', err);
+          if (!isMounted) return;
+          // Fallback to proxy
+          const proxyUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/proxy-audio?url=${encodeURIComponent(track.audioUrl)}`;
+          fetch(proxyUrl).then(r => r.blob()).then(blob => {
+            if (!isMounted) return;
+            console.log('[sing] Proxy blob ready:', Math.round(blob.size / 1024), 'KB');
+            audio.src = URL.createObjectURL(blob);
+            audio.load();
+          }).catch(e => {
+            console.error('[sing] Proxy also failed:', e);
+            if (isMounted) {
+              setIsLoadingAudio(false);
+              toast({ title: "Audio error", description: "Failed to load audio.", variant: "destructive" });
+            }
+          });
         });
     } else {
       console.log('[sing] No audio source available');
