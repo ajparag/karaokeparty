@@ -214,16 +214,34 @@ const Sing = () => {
       timeSyncRafRef.current = requestAnimationFrame(tick);
     };
 
-    // Use AI-separated instrumental, or proxy fallback for testing
+    // Use AI-separated instrumental, or download original as blob fallback
     audio.crossOrigin = "anonymous";
     if (separatedAudio?.instrumentalUrl) {
       audio.src = separatedAudio.instrumentalUrl;
       console.log('[sing] Using AI-separated instrumental');
     } else if (track?.audioUrl) {
-      // Fallback: use original AAC via proxy while separation is pending
+      // Fallback: download original AAC as blob for player testing
+      console.log('[sing] Downloading original AAC as blob for playback test...');
       const proxyUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/proxy-audio?url=${encodeURIComponent(track.audioUrl)}`;
-      audio.src = proxyUrl;
-      console.log('[sing] Using original AAC via proxy (separation pending or test mode)');
+      fetch(proxyUrl)
+        .then(r => {
+          console.log('[sing] Proxy response:', r.status, r.headers.get('content-type'));
+          return r.blob();
+        })
+        .then(blob => {
+          if (!isMounted) return;
+          console.log('[sing] Audio blob ready:', Math.round(blob.size / 1024), 'KB, type:', blob.type);
+          const blobUrl = URL.createObjectURL(blob);
+          audio.src = blobUrl;
+          audio.load();
+        })
+        .catch(err => {
+          console.error('[sing] Failed to download audio:', err);
+          if (isMounted) {
+            setIsLoadingAudio(false);
+            toast({ title: "Audio error", description: "Failed to load audio.", variant: "destructive" });
+          }
+        });
     } else {
       console.log('[sing] No audio source available');
       setIsLoadingAudio(false);
