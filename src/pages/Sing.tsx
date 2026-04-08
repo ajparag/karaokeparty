@@ -214,29 +214,59 @@ const Sing = () => {
       timeSyncRafRef.current = requestAnimationFrame(tick);
     };
 
-    // Only use AI-separated instrumental - NO fallback to original track
+    // Use AI-separated instrumental, or download original as blob fallback
     audio.crossOrigin = "anonymous";
-    if (isTestPlayerMode && track?.audioUrl) {
-      // TEST MODE: use original AAC via proxy to test player compatibility
-      const proxyUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/proxy-audio?url=${encodeURIComponent(track.audioUrl)}`;
-      audio.src = proxyUrl;
-      console.log('[sing][TEST MODE] Playing original AAC via proxy');
-    } else if (separatedAudio?.instrumentalUrl) {
+    if (separatedAudio?.instrumentalUrl) {
       audio.src = separatedAudio.instrumentalUrl;
+      console.log('[sing] Using AI-separated instrumental');
+    } else if (track?.audioUrl) {
+      // Fallback: download original AAC as blob for player testing
+      console.log('[sing] Downloading original AAC as blob for playback test...');
+      const proxyUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/proxy-audio?url=${encodeURIComponent(track.audioUrl)}`;
+      fetch(proxyUrl)
+        .then(r => {
+          console.log('[sing] Proxy response:', r.status, r.headers.get('content-type'));
+          return r.blob();
+        })
+        .then(blob => {
+          if (!isMounted) return;
+          console.log('[sing] Audio blob ready:', Math.round(blob.size / 1024), 'KB, type:', blob.type);
+          const blobUrl = URL.createObjectURL(blob);
+          audio.src = blobUrl;
+          audio.load();
+        })
+        .catch(err => {
+          console.error('[sing] Failed to download audio:', err);
+          if (isMounted) {
+            setIsLoadingAudio(false);
+            toast({ title: "Audio error", description: "Failed to load audio.", variant: "destructive" });
+          }
+        });
     } else {
-      // Don't set src yet - wait for separation to complete
-      console.log('[sing] Waiting for AI-separated instrumental...');
+      console.log('[sing] No audio source available');
       setIsLoadingAudio(false);
       return;
     }
     audio.preload = "auto";
 
     const onLoadedMetadata = () => {
+      console.log('[sing] loadedmetadata fired, duration:', audio.duration);
       if (!isMounted) return;
       setDuration(audio.duration);
       setIsPlayerReady(true);
       setIsLoadingAudio(false);
     };
+
+    audio.addEventListener('canplay', () => console.log('[sing] canplay fired'));
+    audio.addEventListener('canplaythrough', () => console.log('[sing] canplaythrough fired'));
+    audio.addEventListener('progress', () => {
+      if (audio.buffered.length > 0) {
+        console.log('[sing] progress: buffered', Math.round(audio.buffered.end(0)), 's');
+      }
+    });
+    audio.addEventListener('stalled', () => console.log('[sing] stalled'));
+    audio.addEventListener('waiting', () => console.log('[sing] waiting'));
+    audio.addEventListener('suspend', () => console.log('[sing] suspend'));
 
     const onTimeUpdate = () => {
       if (isMounted) setCurrentTime(audio.currentTime);
@@ -931,7 +961,7 @@ const Sing = () => {
       </header>
 
       {/* Loading Dialog - shows while waiting for AI separation */}
-      <AlertDialog open={!isTestPlayerMode && (isLoadingFromCache || (isLoadingAudio && !!track) || (!!track && !separatedAudio))}>
+      <AlertDialog open={isLoadingFromCache || (isLoadingAudio && !!track)}>
         <AlertDialogContent className="max-w-sm">
           <AlertDialogHeader className="text-center">
             <div className="flex justify-center mb-4">
