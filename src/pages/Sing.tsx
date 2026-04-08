@@ -232,11 +232,23 @@ const Sing = () => {
     audio.preload = "auto";
 
     const onLoadedMetadata = () => {
+      console.log('[sing] loadedmetadata fired, duration:', audio.duration);
       if (!isMounted) return;
       setDuration(audio.duration);
       setIsPlayerReady(true);
       setIsLoadingAudio(false);
     };
+
+    audio.addEventListener('canplay', () => console.log('[sing] canplay fired'));
+    audio.addEventListener('canplaythrough', () => console.log('[sing] canplaythrough fired'));
+    audio.addEventListener('progress', () => {
+      if (audio.buffered.length > 0) {
+        console.log('[sing] progress: buffered', Math.round(audio.buffered.end(0)), 's');
+      }
+    });
+    audio.addEventListener('stalled', () => console.log('[sing] stalled'));
+    audio.addEventListener('waiting', () => console.log('[sing] waiting'));
+    audio.addEventListener('suspend', () => console.log('[sing] suspend'));
 
     const onTimeUpdate = () => {
       if (isMounted) setCurrentTime(audio.currentTime);
