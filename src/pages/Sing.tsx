@@ -214,18 +214,18 @@ const Sing = () => {
       timeSyncRafRef.current = requestAnimationFrame(tick);
     };
 
-    // Only use AI-separated instrumental - NO fallback to original track
+    // Use AI-separated instrumental, or proxy fallback for testing
     audio.crossOrigin = "anonymous";
-    if (isTestPlayerMode && track?.audioUrl) {
-      // TEST MODE: use original AAC via proxy to test player compatibility
+    if (separatedAudio?.instrumentalUrl) {
+      audio.src = separatedAudio.instrumentalUrl;
+      console.log('[sing] Using AI-separated instrumental');
+    } else if (track?.audioUrl) {
+      // Fallback: use original AAC via proxy while separation is pending
       const proxyUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/proxy-audio?url=${encodeURIComponent(track.audioUrl)}`;
       audio.src = proxyUrl;
-      console.log('[sing][TEST MODE] Playing original AAC via proxy');
-    } else if (separatedAudio?.instrumentalUrl) {
-      audio.src = separatedAudio.instrumentalUrl;
+      console.log('[sing] Using original AAC via proxy (separation pending or test mode)');
     } else {
-      // Don't set src yet - wait for separation to complete
-      console.log('[sing] Waiting for AI-separated instrumental...');
+      console.log('[sing] No audio source available');
       setIsLoadingAudio(false);
       return;
     }
