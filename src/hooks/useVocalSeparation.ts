@@ -18,7 +18,7 @@ let hfSpaceWarmedUp = false;
 let hfWarmUpPromise: Promise<void> | null = null;
 
 // HF spaces
-const AAC_SPACE = "ajparag/demucs-stem-separation";
+const AAC_SPACE = "https://ajparag-aac-vocal-separator.hf.space/";
 const WAV_SPACE_PRIMARY = "abidlabs/music-separation";
 
 // Warm up HuggingFace space proactively (non-blocking, singleton)
