@@ -8,7 +8,7 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const AAC_SPACE = "ajparag/demucs-stem-separation";
+const AAC_SPACE = "https://ajparag-aac-vocal-separator.hf.space/";
 
 async function warmUpSpace(hfToken: string): Promise<boolean> {
   try {
