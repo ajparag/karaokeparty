@@ -208,7 +208,7 @@ async function searchSaavn(query: string): Promise<Track[]> {
     console.log('Searching Saavn for:', query);
     
     const response = await fetch(
-      `https://saavn.sumit.co/api/search/songs?query=${searchQuery}&page=0&limit=20`,
+      `https://jiosaavn.rajputhemant.dev/api/search/songs?query=${searchQuery}&page=1&limit=20`,
       {
         headers: {
           Accept: 'application/json',
