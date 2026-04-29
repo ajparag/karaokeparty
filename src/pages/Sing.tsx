@@ -689,19 +689,21 @@ const Sing = () => {
       const scoreRating = totalScore >= 900 ? 'L' : totalScore >= 800 ? 'S' : totalScore >= 700 ? 'A' : 
                    totalScore >= 600 ? 'B' : totalScore >= 500 ? 'C' : totalScore >= 300 ? 'D' : 'F';
 
-      const { error } = await supabase.from('scores').insert({
-        user_id: user.id,
-        song_title: track.title,
-        song_artist: track.artist,
-        track_id: track.id,
-        score: totalScore,
-        rating: scoreRating,
-        timing_accuracy: Math.round(avgPitch),
-        rhythm_accuracy: Math.round(avgRhythm),
-        duration_seconds: Math.round(duration),
-        thumbnail_url: track.thumbnail,
-        display_name: displayName || null,
-        city: city || null,
+      const { error } = await supabase.functions.invoke('submit-score', {
+        body: {
+          songTitle: track.title,
+          songArtist: track.artist,
+          trackId: track.id,
+          score: totalScore,
+          rating: scoreRating,
+          timingAccuracy: Math.round(avgPitch),
+          rhythmAccuracy: Math.round(avgRhythm),
+          durationSeconds: Math.round(duration),
+          playedSeconds: Math.round(currentTime),
+          thumbnailUrl: track.thumbnail,
+          displayName,
+          city,
+        },
       });
 
       if (error) throw error;
@@ -738,17 +740,19 @@ const Sing = () => {
       const rating = totalScore >= 900 ? 'L' : totalScore >= 800 ? 'S' : totalScore >= 700 ? 'A' : 
                      totalScore >= 600 ? 'B' : totalScore >= 500 ? 'C' : totalScore >= 300 ? 'D' : 'F';
 
-      const { error } = await supabase.from('scores').insert({
-        user_id: user.id,
-        song_title: track.title,
-        song_artist: track.artist,
-        track_id: track.id,
-        score: totalScore,
-        rating,
-        timing_accuracy: Math.round(avgPitch),
-        rhythm_accuracy: Math.round(avgRhythm),
-        duration_seconds: Math.round(duration),
-        thumbnail_url: track.thumbnail,
+      const { error } = await supabase.functions.invoke('submit-score', {
+        body: {
+          songTitle: track.title,
+          songArtist: track.artist,
+          trackId: track.id,
+          score: totalScore,
+          rating,
+          timingAccuracy: Math.round(avgPitch),
+          rhythmAccuracy: Math.round(avgRhythm),
+          durationSeconds: Math.round(duration),
+          playedSeconds: Math.round(currentTime),
+          thumbnailUrl: track.thumbnail,
+        },
       });
 
       if (error) throw error;
