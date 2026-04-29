@@ -62,7 +62,7 @@ const Sing = () => {
   const { trackId } = useParams();
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { user } = useAuth();
+  const { user, session } = useAuth();
   
   const [track, setTrack] = useState<Track | null>(null);
   const [lyrics, setLyrics] = useState<LyricLine[]>([]);
@@ -239,7 +239,9 @@ const Sing = () => {
           if (!isMounted) return;
           // Fallback to proxy
           const proxyUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/proxy-audio?url=${encodeURIComponent(track.audioUrl)}`;
-          fetch(proxyUrl).then(r => r.blob()).then(blob => {
+          fetch(proxyUrl, {
+            headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
+          }).then(r => r.blob()).then(blob => {
             if (!isMounted) return;
             console.log('[sing] Proxy blob ready:', Math.round(blob.size / 1024), 'KB');
             audio.src = URL.createObjectURL(blob);
