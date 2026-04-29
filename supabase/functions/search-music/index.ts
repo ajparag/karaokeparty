@@ -207,14 +207,25 @@ async function searchSaavn(query: string): Promise<Track[]> {
     const searchQuery = encodeURIComponent(query);
     console.log('Searching Saavn for:', query);
     
-    const response = await fetch(
-      `https://jiosaavn.rajputhemant.dev/api/search/songs?query=${searchQuery}&page=1&limit=20`,
+    let response = await fetch(
+      `https://jiosaavn.rajputhemant.dev/search/songs?q=${searchQuery}&page=1&n=20&camel=true`,
       {
         headers: {
           Accept: 'application/json',
+          'User-Agent': 'KaraokeParty/1.0',
         },
       }
     );
+
+    if (response.status === 429) {
+      const retryText = await response.text();
+      console.warn('Saavn API rate limited, retrying once:', retryText);
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      response = await fetch(
+        `https://jiosaavn.rajputhemant.dev/search/songs?q=${searchQuery}&page=1&n=20&camel=true`,
+        { headers: { Accept: 'application/json', 'User-Agent': 'KaraokeParty/1.0' } }
+      );
+    }
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -224,7 +235,7 @@ async function searchSaavn(query: string): Promise<Track[]> {
 
     const data = await response.json();
 
-    if (!data.success || !data.data?.results) {
+    if (data.status !== 'Success' || !data.data?.results) {
       console.error('No results in Saavn response');
       return [];
     }
@@ -232,20 +243,28 @@ async function searchSaavn(query: string): Promise<Track[]> {
     const tracks: Track[] = data.data.results.map((song: any) => {
       // Get audio URL (prefer 160kbps for faster loading, exclude 320kbps)
       const downloadUrls = song.downloadUrl || [];
-      const audioUrl = downloadUrls.find((d: any) => d.quality === '160kbps')?.url 
+      const audioUrl = downloadUrls.find((d: any) => d.quality === '160kbps')?.link 
+        || downloadUrls.find((d: any) => d.quality === '96kbps')?.link
+        || downloadUrls.find((d: any) => d.quality === '160kbps')?.url 
         || downloadUrls.find((d: any) => d.quality === '96kbps')?.url
+        || downloadUrls[downloadUrls.length - 1]?.link
         || downloadUrls[downloadUrls.length - 1]?.url
         || '';
 
       // Get the best image (prefer 500x500)
       const images = song.image || [];
-      const thumbnail = images.find((img: any) => img.quality === '500x500')?.url
+      const thumbnail = images.find((img: any) => img.quality === '500x500')?.link
+        || images.find((img: any) => img.quality === '150x150')?.link
+        || images.find((img: any) => img.quality === '500x500')?.url
         || images.find((img: any) => img.quality === '150x150')?.url
+        || images[images.length - 1]?.link
         || images[images.length - 1]?.url
         || '';
 
       // Get artist names
-      const artists = song.artists?.primary?.map((a: any) => a.name).join(', ') 
+      const artists = song.artistMap?.primaryArtists?.map((a: any) => a.name).join(', ')
+        || song.artistMap?.artists?.filter((a: any) => /singer|music/i.test(a.role || '')).map((a: any) => a.name).join(', ')
+        || song.artists?.primary?.map((a: any) => a.name).join(', ')
         || song.artists?.all?.map((a: any) => a.name).join(', ')
         || 'Unknown Artist';
 
@@ -260,7 +279,7 @@ async function searchSaavn(query: string): Promise<Track[]> {
         duration: formatDuration(song.duration || 0),
         source: 'saavn' as const,
         audioUrl: audioUrl,
-        album: decodeHtmlEntities(song.album?.name || ''),
+        album: decodeHtmlEntities(typeof song.album === 'string' ? song.album : song.album?.name || ''),
         playCount: playCount,
       };
     });
