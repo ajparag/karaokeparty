@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { Client } from "https://esm.sh/@gradio/client@1.8.0";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.89.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -9,6 +10,21 @@ const corsHeaders = {
 };
 
 const AAC_SPACE = "https://ajparag-aac-vocal-separator.hf.space/";
+
+async function requireUser(req: Request) {
+  const authHeader = req.headers.get("authorization");
+  if (!authHeader?.startsWith("Bearer ")) return null;
+
+  const supabase = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_ANON_KEY")!,
+    { global: { headers: { Authorization: authHeader } } }
+  );
+
+  const token = authHeader.replace("Bearer ", "");
+  const { data, error } = await supabase.auth.getClaims(token);
+  return error || !data?.claims ? null : data.claims.sub;
+}
 
 async function warmUpSpace(hfToken: string): Promise<boolean> {
   try {
@@ -32,10 +48,18 @@ serve(async (req) => {
   }
 
   try {
+    const userId = await requireUser(req);
+    if (!userId) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const body = await req.json();
 
     if (body.warmUp) {
-      console.log("[separate-vocals] Received warm-up request");
+      console.log("[separate-vocals] Received warm-up request", { userId });
       const HF_TOKEN = Deno.env.get("HF_TOKEN");
       if (!HF_TOKEN) {
         return new Response(
