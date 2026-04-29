@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.89.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -16,6 +17,32 @@ function inferContentType(url: string, fallback: string | null) {
   return fallback || "application/octet-stream";
 }
 
+async function requireUser(req: Request) {
+  const authHeader = req.headers.get("authorization");
+  if (!authHeader?.startsWith("Bearer ")) return null;
+
+  const supabase = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_ANON_KEY")!,
+    { global: { headers: { Authorization: authHeader } } }
+  );
+
+  const token = authHeader.replace("Bearer ", "");
+  const { data, error } = await supabase.auth.getClaims(token);
+  return error || !data?.claims ? null : data.claims.sub;
+}
+
+function isAllowedAudioUrl(audioUrl: string) {
+  try {
+    const parsed = new URL(audioUrl);
+    if (parsed.protocol !== "https:") return false;
+    const host = parsed.hostname.toLowerCase();
+    return host === "jiosaavn.com" || host.endsWith(".jiosaavn.com") || host.endsWith(".saavncdn.com");
+  } catch {
+    return false;
+  }
+}
+
 serve(async (req) => {
   // Handle CORS preflight
   if (req.method === "OPTIONS") {
@@ -23,6 +50,14 @@ serve(async (req) => {
   }
 
   try {
+    const userId = await requireUser(req);
+    if (!userId) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     let audioUrl: string | null = null;
 
     if (req.method === "GET") {
@@ -40,8 +75,15 @@ serve(async (req) => {
       });
     }
 
+    if (!isAllowedAudioUrl(audioUrl)) {
+      return new Response(JSON.stringify({ error: "Audio URL is not allowed" }), {
+        status: 403,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const range = req.headers.get("range");
-    console.log("Proxying audio:", { url: audioUrl, range });
+    console.log("Proxying allowed audio:", { userId, host: new URL(audioUrl).hostname, range });
 
     // Forward range header to support streaming + seeking
     const upstreamHeaders: Record<string, string> = {
