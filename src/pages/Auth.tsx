@@ -156,6 +156,8 @@ export default function Auth() {
                   <div className="relative flex justify-center text-xs uppercase"><span className="bg-card px-2 text-muted-foreground">Or</span></div>
                 </div>
                 <form onSubmit={handleSignIn} className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="signin-email">Email</Label>
                     <Input
                       id="signin-email"
                       type="email"
@@ -164,6 +166,7 @@ export default function Auth() {
                       onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                       required
                     />
+                  </div>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="signin-password">Password</Label>
