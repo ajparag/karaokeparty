@@ -9,7 +9,7 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const AAC_SPACE = "https://ajparag-aac-vocal-separator.hf.space/";
+const AAC_SPACE = "https://ajparag--ajparag-vocal-separator-web-app.modal.run/";
 
 async function requireUser(req: Request) {
   const authHeader = req.headers.get("authorization");
