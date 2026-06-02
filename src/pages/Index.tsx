@@ -301,6 +301,37 @@ const Index = () => {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
+      {/* Top-right auth widget */}
+      <div className="absolute top-4 right-4 z-20">
+        {user ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" className="relative h-10 w-10 rounded-full">
+                <Avatar className="h-10 w-10">
+                  <AvatarFallback className="gradient-primary text-primary-foreground">
+                    {user.email?.charAt(0).toUpperCase()}
+                  </AvatarFallback>
+                </Avatar>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuItem className="gap-2">
+                <User className="h-4 w-4" />
+                <span className="truncate">{user.email}</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={signOut} className="gap-2 text-destructive">
+                <LogOut className="h-4 w-4" />
+                Sign Out
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : (
+          <Link to="/auth">
+            <Button className="gradient-primary shadow-glow">Sign In</Button>
+          </Link>
+        )}
+      </div>
+
       {/* Hero Section */}
       <div className="flex-1 flex flex-col items-center justify-center px-4 py-16 relative overflow-hidden">
         {/* Background effects */}
