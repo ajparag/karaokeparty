@@ -299,20 +299,18 @@ serve(async (req) => {
       }
     }
 
-    // Validate duration
-    let validDuration = 180;
-    if (typeof duration === 'number') {
-      if (duration < MIN_DURATION || duration > MAX_DURATION) {
-        console.error(`Invalid duration: ${duration}`);
-        return new Response(
-          JSON.stringify({ error: `Duration must be between ${MIN_DURATION} and ${MAX_DURATION} seconds` }),
-          { 
-            status: 400, 
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-          }
-        );
+    // Validate album if provided
+    let trimmedAlbum: string | undefined;
+    if (typeof album === 'string' && album.trim().length > 0) {
+      trimmedAlbum = album.trim().slice(0, MAX_TITLE_LENGTH);
+    }
+
+    // Validate duration (optional)
+    let validDuration: number | undefined;
+    if (typeof duration === 'number' && isFinite(duration)) {
+      if (duration >= MIN_DURATION && duration <= MAX_DURATION) {
+        validDuration = Math.floor(duration);
       }
-      validDuration = Math.floor(duration);
     }
 
     // Validate searchMultiple
