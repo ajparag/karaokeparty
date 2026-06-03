@@ -18,6 +18,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useVocalSeparation, prefetchAudio, warmUpHFSpace } from "@/hooks/useVocalSeparation";
 import { useAuth } from "@/hooks/useAuth";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { fetchLyricsCached, parseDurationToSeconds } from "@/lib/lyricsClient";
 import {
   DropdownMenu,
   DropdownMenuContent,
