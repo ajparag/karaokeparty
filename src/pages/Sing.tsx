@@ -477,26 +477,29 @@ const Sing = () => {
     return () => clearInterval(intervalId);
   }, [isPlaying, isMicActive, SCORE_WEIGHTS]);
 
-  const fetchLyrics = async (title: string, artist: string) => {
+  const fetchLyrics = async (title: string, artist: string, album?: string, durationStr?: string) => {
     try {
       setLyrics([]);
-      const { data } = await supabase.functions.invoke('fetch-lyrics', {
-        body: { title, artist }
+      const data = await fetchLyricsCached({
+        title,
+        artist,
+        album,
+        duration: parseDurationToSeconds(durationStr),
       });
       if (data?.lyrics && data.lyrics.length > 0) {
         setLyrics(data.lyrics);
       } else {
-        toast({ 
-          title: "No lyrics found", 
+        toast({
+          title: "Lyrics not found",
           description: "Try editing the title to search again",
           variant: "destructive"
         });
       }
     } catch (error) {
       console.error('Failed to fetch lyrics:', error);
-      toast({ 
-        title: "Failed to fetch lyrics", 
-        description: "Try editing the title to search again",
+      toast({
+        title: "Lyrics not found",
+        description: "Request timed out — try editing the title to search again",
         variant: "destructive"
       });
     }
