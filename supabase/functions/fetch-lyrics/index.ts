@@ -338,9 +338,9 @@ serve(async (req) => {
       );
     }
     
-    // Default behavior: return first/best match
-    const lyricsResult = await searchLRCLIB(trimmedTitle, trimmedArtist);
-    
+    // Default behavior: instant cached lookup only (no slow fallbacks)
+    const lyricsResult = await searchLRCLIB(trimmedTitle, trimmedArtist, trimmedAlbum, validDuration);
+
     if (lyricsResult) {
       console.log(`Found ${lyricsResult.lyrics.length} lines from ${lyricsResult.source}`);
       return new Response(
@@ -348,13 +348,11 @@ serve(async (req) => {
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
-    
-    // Fallback to placeholder
-    console.log('No lyrics found, using placeholder');
-    const placeholder = generatePlaceholderLyrics(trimmedTitle, validDuration);
-    
+
+    // No cached lyrics — return empty result (client renders "Lyrics not found")
+    console.log('No cached lyrics found for', trimmedTitle);
     return new Response(
-      JSON.stringify(placeholder),
+      JSON.stringify({ lyrics: [], source: 'lrclib', synced: false, notFound: true } as LyricsResponse & { notFound: boolean }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   } catch (error: unknown) {
