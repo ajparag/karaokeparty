@@ -516,8 +516,10 @@ const Sing = () => {
     setSelectedLyricsId("");
     
     try {
-      const { data } = await supabase.functions.invoke('fetch-lyrics', {
-        body: { title: lyricsSearchTitle.trim(), artist: lyricsSearchArtist.trim(), searchMultiple: true }
+      const data = await fetchLyricsCached({
+        title: lyricsSearchTitle.trim(),
+        artist: lyricsSearchArtist.trim(),
+        searchMultiple: true,
       });
       
       if (data?.results && data.results.length > 0) {
