@@ -225,7 +225,7 @@ const Index = () => {
     }
 
     // Auto-fetch lyrics with multiple results using first artist for better LRCLIB matches
-    fetchLyrics(cleanTitle, firstArtist);
+    fetchLyrics(cleanTitle, firstArtist, track.album, track.duration);
   };
 
   // Reset separation state when dialog closes
