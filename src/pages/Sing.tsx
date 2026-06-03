@@ -30,6 +30,7 @@ import { Slider } from "@/components/ui/slider";
 import { useVocalSeparation } from "@/hooks/useVocalSeparation";
 import { ScoreSubmissionDialog } from "@/components/karaoke/ScoreSubmissionDialog";
 import { AudioDebugOverlay } from "@/components/karaoke/AudioDebugOverlay";
+import { fetchLyricsCached, parseDurationToSeconds } from "@/lib/lyricsClient";
 
 interface Track {
   id: string;
