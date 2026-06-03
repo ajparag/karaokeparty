@@ -238,7 +238,7 @@ serve(async (req) => {
 
   try {
     const body = await req.json();
-    const { title, artist, duration = 180, searchMultiple = false } = body;
+    const { title, artist, album, duration, searchMultiple = false } = body;
     
     // Input validation: title is required and must be a string
     if (!title || typeof title !== 'string') {
