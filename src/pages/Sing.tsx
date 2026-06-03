@@ -143,15 +143,15 @@ const Sing = () => {
           if (parsedLyrics && parsedLyrics.length > 0) {
             setLyrics(parsedLyrics);
           } else {
-            fetchLyrics(parsed.title, parsed.artist);
+            fetchLyrics(parsed.title, parsed.artist, parsed.album, parsed.duration);
           }
         } catch {
-          fetchLyrics(parsed.title, parsed.artist);
+          fetchLyrics(parsed.title, parsed.artist, parsed.album, parsed.duration);
         }
         // Clean up after use
         sessionStorage.removeItem('prefetchedLyrics');
       } else {
-        fetchLyrics(parsed.title, parsed.artist);
+        fetchLyrics(parsed.title, parsed.artist, parsed.album, parsed.duration);
       }
     } else {
       navigate('/');
