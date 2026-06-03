@@ -237,13 +237,17 @@ const Index = () => {
     setLyricsDialogOpen(open);
   };
 
-  const fetchLyrics = async (title: string, artist: string) => {
+  const fetchLyrics = async (title: string, artist: string, album?: string, durationStr?: string) => {
     setIsSearchingLyrics(true);
     setLyricsSearchResults([]);
     setSelectedLyricsId("");
     try {
-      const { data } = await supabase.functions.invoke("fetch-lyrics", {
-        body: { title, artist, searchMultiple: true },
+      const data = await fetchLyricsCached({
+        title,
+        artist,
+        album,
+        duration: parseDurationToSeconds(durationStr),
+        searchMultiple: true,
       });
       if (data?.results && data.results.length > 0) {
         setLyricsSearchResults(data.results);
@@ -252,7 +256,7 @@ const Index = () => {
       } else {
         setFetchedLyrics([]);
         toast({
-          title: "No lyrics found",
+          title: "Lyrics not found",
           description: "Try editing the title/artist and search again",
           variant: "destructive",
         });
@@ -261,8 +265,8 @@ const Index = () => {
       console.error("Failed to fetch lyrics:", error);
       setFetchedLyrics([]);
       toast({
-        title: "Failed to fetch lyrics",
-        description: "Try editing the title and search again",
+        title: "Lyrics not found",
+        description: "Request timed out — try editing the title and search again",
         variant: "destructive",
       });
     } finally {
