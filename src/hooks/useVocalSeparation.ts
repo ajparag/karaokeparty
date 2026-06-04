@@ -1,6 +1,4 @@
 import { useState, useCallback, useRef } from 'react';
-import { Client, handle_file } from '@gradio/client';
-import { supabase } from '@/integrations/supabase/client';
 import { getCachedTracks, saveCachedTracks, clearOldCache } from '@/lib/audioCache';
 
 interface SeparationResult {
@@ -12,6 +10,7 @@ interface SeparationResult {
 // Audio prefetch cache - stores downloaded blobs before separation starts
 const audioPrefetchCache = new Map<string, { blob: Blob; timestamp: number }>();
 const PREFETCH_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const separationPromiseCache = new Map<string, Promise<SeparationResult | null>>();
 
 // Track if HF space has been warmed up this session
 let hfSpaceWarmedUp = false;
@@ -19,7 +18,7 @@ let hfWarmUpPromise: Promise<void> | null = null;
 
 // Vocal separation endpoints (Gradio-compatible)
 const AAC_SPACE = "https://ajparag--vocal-separator-v3-ui.modal.run/";
-const WAV_SPACE_PRIMARY = "abidlabs/music-separation";
+const AAC_SPACE_BASE = AAC_SPACE.replace(/\/$/, '');
 
 // Warm up HuggingFace space proactively (non-blocking, singleton)
 export async function warmUpHFSpace(): Promise<void> {
@@ -85,29 +84,6 @@ async function getAudioBlob(audioUrl: string): Promise<Blob> {
   return response.blob();
 }
 
-// Connect to HF space with retry
-async function connectToHFSpace(): Promise<{ client: any; spaceId: string; isAac: boolean }> {
-  // Try AAC space first
-  try {
-    console.log('[VocalSeparation] Connecting to', AAC_SPACE);
-    const client = await Client.connect(AAC_SPACE);
-    console.log('[VocalSeparation] Connected to AAC space');
-    return { client, spaceId: AAC_SPACE, isAac: true };
-  } catch (err) {
-    console.warn('[VocalSeparation] AAC space failed, trying WAV fallback:', err);
-  }
-
-  // Fallback to WAV space
-  try {
-    console.log('[VocalSeparation] Connecting to', WAV_SPACE_PRIMARY);
-    const client = await Client.connect(WAV_SPACE_PRIMARY);
-    console.log('[VocalSeparation] Connected to WAV space');
-    return { client, spaceId: WAV_SPACE_PRIMARY, isAac: false };
-  } catch (err) {
-    throw new Error('Failed to connect to any HF space');
-  }
-}
-
 // Parse separation result from HF space
 function parseHFResult(data: any, isAac: boolean): { instrumentalUrl: string | null; vocalsUrl: string | null } {
   let instrumentalUrl: string | null = null;
@@ -116,7 +92,7 @@ function parseHFResult(data: any, isAac: boolean): { instrumentalUrl: string | n
   if (Array.isArray(data)) {
     for (const item of data) {
       if (item && typeof item === 'object') {
-        const url = item.url as string;
+        const url = normalizeGradioFileUrl(item);
         const origName = (item.orig_name || item.path || '').toLowerCase();
         const checkString = origName || (url || '').toLowerCase();
 
@@ -132,7 +108,7 @@ function parseHFResult(data: any, isAac: boolean): { instrumentalUrl: string | n
 
     // Positional fallback
     if (data.length >= 2 && (!instrumentalUrl || !vocalsUrl)) {
-      const getUrl = (item: any) => typeof item === 'string' ? item : item?.url;
+      const getUrl = (item: any) => normalizeGradioFileUrl(item);
       const url0 = getUrl(data[0]);
       const url1 = getUrl(data[1]);
       if (url0 && url1) {
@@ -150,6 +126,21 @@ function parseHFResult(data: any, isAac: boolean): { instrumentalUrl: string | n
   return { instrumentalUrl, vocalsUrl };
 }
 
+function normalizeGradioFileUrl(itemOrUrl: any): string | null {
+  const rawUrl = typeof itemOrUrl === 'string' ? itemOrUrl : itemOrUrl?.url;
+  const path = typeof itemOrUrl === 'object' ? itemOrUrl?.path : null;
+
+  if (typeof path === 'string' && path.startsWith('/tmp/gradio/')) {
+    return `${AAC_SPACE_BASE}/gradio_api/file=${path}`;
+  }
+
+  if (typeof rawUrl === 'string' && rawUrl.length > 0) {
+    return rawUrl.replace('/g/gradio_api/file=', '/gradio_api/file=');
+  }
+
+  return null;
+}
+
 // Download a track from HF URL
 async function downloadTrack(url: string, label: string): Promise<Blob> {
   console.log(`[VocalSeparation] Downloading ${label} from:`, url.slice(0, 120));
@@ -158,7 +149,8 @@ async function downloadTrack(url: string, label: string): Promise<Blob> {
     throw new Error(`Failed to download ${label}: ${response.status}`);
   }
   const contentType = response.headers.get('content-type');
-  const blob = await response.blob();
+  const rawBlob = await response.blob();
+  const blob = new Blob([rawBlob], { type: 'audio/mp4' });
   console.log(`[VocalSeparation] === ${label.toUpperCase()} DOWNLOAD ===`);
   console.log(`[VocalSeparation] ${label} size: ${Math.round(blob.size / 1024)}KB (${blob.size} bytes)`);
   console.log(`[VocalSeparation] ${label} content-type: ${contentType}`);
@@ -178,6 +170,22 @@ export function useVocalSeparation() {
     setProgress('Checking cache...');
     setError(null);
 
+    const existingSeparation = separationPromiseCache.get(audioUrl);
+    if (existingSeparation) {
+      setProgress('AI vocal separation in progress...');
+      const result = await existingSeparation;
+      if (result) setSeparatedAudio(result);
+      setProgress('');
+      setIsProcessing(false);
+      return result;
+    }
+
+    let resolveSharedSeparation!: (value: SeparationResult | null) => void;
+    const sharedSeparation = new Promise<SeparationResult | null>((resolve) => {
+      resolveSharedSeparation = resolve;
+    });
+    separationPromiseCache.set(audioUrl, sharedSeparation);
+
     abortControllerRef.current = new AbortController();
 
     try {
@@ -195,6 +203,7 @@ export function useVocalSeparation() {
         setSeparatedAudio(result);
         setProgress('');
         setIsProcessing(false);
+        resolveSharedSeparation(result);
         return result;
       }
 
@@ -223,7 +232,7 @@ export function useVocalSeparation() {
       console.log('[VocalSeparation] === UPLOAD INFO ===');
       console.log('[VocalSeparation] Audio:', Math.round(audioBlob.size / 1024), 'KB,', audioFile.type, 'ext:', safeExt);
 
-      const base = AAC_SPACE.replace(/\/$/, '');
+      const base = AAC_SPACE_BASE;
 
       // 1. Upload audio
       setProgress('Uploading audio...');
@@ -309,7 +318,7 @@ export function useVocalSeparation() {
       console.log('[VocalSeparation] Result:', JSON.stringify(data).slice(0, 500));
 
       const { instrumentalUrl: instUrl, vocalsUrl: vocUrl } = parseHFResult(data, true);
-      const finalInstUrl = instUrl || (Array.isArray(data) ? (typeof data[0] === 'string' ? data[0] : data[0]?.url) : null);
+      const finalInstUrl = instUrl || (Array.isArray(data) ? normalizeGradioFileUrl(data[0]) : null);
       if (!finalInstUrl) throw new Error('No instrumental URL found');
 
       setProgress('Downloading separated tracks...');
@@ -348,6 +357,7 @@ export function useVocalSeparation() {
         .then(() => console.log('[VocalSeparation] Cached tracks saved'))
         .catch((err) => console.error('[VocalSeparation] Failed to cache:', err));
 
+      resolveSharedSeparation(separationResult);
       return separationResult;
 
     } catch (err) {
@@ -356,8 +366,12 @@ export function useVocalSeparation() {
       setError(message);
       setProgress('');
       setIsProcessing(false);
+      resolveSharedSeparation(null);
       return null;
     } finally {
+      if (separationPromiseCache.get(audioUrl) === sharedSeparation) {
+        separationPromiseCache.delete(audioUrl);
+      }
       abortControllerRef.current = null;
     }
   }, []);
