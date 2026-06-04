@@ -92,7 +92,7 @@ function parseHFResult(data: any, isAac: boolean): { instrumentalUrl: string | n
   if (Array.isArray(data)) {
     for (const item of data) {
       if (item && typeof item === 'object') {
-        const url = item.url as string;
+        const url = normalizeGradioFileUrl(item);
         const origName = (item.orig_name || item.path || '').toLowerCase();
         const checkString = origName || (url || '').toLowerCase();
 
@@ -108,7 +108,7 @@ function parseHFResult(data: any, isAac: boolean): { instrumentalUrl: string | n
 
     // Positional fallback
     if (data.length >= 2 && (!instrumentalUrl || !vocalsUrl)) {
-      const getUrl = (item: any) => typeof item === 'string' ? item : item?.url;
+      const getUrl = (item: any) => normalizeGradioFileUrl(item);
       const url0 = getUrl(data[0]);
       const url1 = getUrl(data[1]);
       if (url0 && url1) {
@@ -215,7 +215,7 @@ export function useVocalSeparation() {
       console.log('[VocalSeparation] === UPLOAD INFO ===');
       console.log('[VocalSeparation] Audio:', Math.round(audioBlob.size / 1024), 'KB,', audioFile.type, 'ext:', safeExt);
 
-      const base = AAC_SPACE.replace(/\/$/, '');
+      const base = AAC_SPACE_BASE;
 
       // 1. Upload audio
       setProgress('Uploading audio...');
@@ -301,7 +301,7 @@ export function useVocalSeparation() {
       console.log('[VocalSeparation] Result:', JSON.stringify(data).slice(0, 500));
 
       const { instrumentalUrl: instUrl, vocalsUrl: vocUrl } = parseHFResult(data, true);
-      const finalInstUrl = instUrl || (Array.isArray(data) ? (typeof data[0] === 'string' ? data[0] : data[0]?.url) : null);
+      const finalInstUrl = instUrl || (Array.isArray(data) ? normalizeGradioFileUrl(data[0]) : null);
       if (!finalInstUrl) throw new Error('No instrumental URL found');
 
       setProgress('Downloading separated tracks...');
