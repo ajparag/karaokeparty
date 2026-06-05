@@ -19,6 +19,11 @@ let hfWarmUpPromise: Promise<void> | null = null;
 // Vocal separation endpoints (Gradio-compatible)
 const AAC_SPACE = "https://ajparag--vocal-separator-v3-vocalseparator-ui.modal.run/";
 const AAC_SPACE_BASE = AAC_SPACE.replace(/\/$/, '');
+const SEPARATION_CACHE_VERSION = 'modal-v3-vocalseparator-aac-v1';
+
+function getSeparationCacheKey(audioUrl: string) {
+  return `${SEPARATION_CACHE_VERSION}:${audioUrl}`;
+}
 
 // Warm up HuggingFace space proactively (non-blocking, singleton)
 export async function warmUpHFSpace(): Promise<void> {
@@ -166,6 +171,7 @@ export function useVocalSeparation() {
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const separateVocals = useCallback(async (audioUrl: string): Promise<SeparationResult | null> => {
+    const cacheKey = getSeparationCacheKey(audioUrl);
     setIsProcessing(true);
     setProgress('Checking cache...');
     setError(null);
@@ -193,7 +199,7 @@ export function useVocalSeparation() {
       clearOldCache(7).catch(console.error);
 
       // Check IndexedDB cache first
-      const cached = await getCachedTracks(audioUrl);
+      const cached = await getCachedTracks(cacheKey);
       if (cached) {
         setProgress('Loading from cache...');
         const instrumentalUrl = URL.createObjectURL(cached.instrumentalBlob);
@@ -353,7 +359,7 @@ export function useVocalSeparation() {
       setIsProcessing(false);
 
       // Cache in background
-      saveCachedTracks(audioUrl, instrumentalBlob, vocalsBlob)
+      saveCachedTracks(cacheKey, instrumentalBlob, vocalsBlob)
         .then(() => console.log('[VocalSeparation] Cached tracks saved'))
         .catch((err) => console.error('[VocalSeparation] Failed to cache:', err));
 
