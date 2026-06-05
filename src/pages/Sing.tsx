@@ -218,67 +218,38 @@ const Sing = () => {
       timeSyncRafRef.current = requestAnimationFrame(tick);
     };
 
-    const applyAudioBlob = (blob: Blob) => {
-      const playableBlob = blob.type === 'audio/mp4' ? blob : new Blob([blob], { type: 'audio/mp4' });
-      const blobUrl = URL.createObjectURL(playableBlob);
-      audio.src = blobUrl;
-      audio.load();
-    };
+    let objectUrlToRevoke: string | null = null;
 
-    // Use AI-separated instrumental, or download original as blob fallback
-    audio.crossOrigin = "anonymous";
-    if (separatedAudio?.instrumentalUrl) {
-      audio.src = separatedAudio.instrumentalUrl;
-      audio.load();
-      console.log('[sing] Using AI-separated instrumental');
-    } else if (track?.audioUrl) {
-      // Fallback: download original AAC directly as blob
-      console.log('[sing] Downloading original audio as blob...');
-      fetch(track.audioUrl)
-        .then(r => {
-          console.log('[sing] Audio fetch response:', r.status, r.headers.get('content-type'));
-          return r.blob();
-        })
-        .then(blob => {
-          if (!isMounted) return;
-          console.log('[sing] Audio blob ready:', Math.round(blob.size / 1024), 'KB, type:', blob.type);
-          applyAudioBlob(blob);
-        })
-        .catch(err => {
-          console.error('[sing] Audio download failed, trying proxy...', err);
-          if (!isMounted) return;
-          // Fallback to proxy
-          const proxyUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/proxy-audio?url=${encodeURIComponent(track.audioUrl)}`;
-          fetch(proxyUrl, {
-            headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
-          }).then(r => r.blob()).then(blob => {
-            if (!isMounted) return;
-            console.log('[sing] Proxy blob ready:', Math.round(blob.size / 1024), 'KB');
-            applyAudioBlob(blob);
-          }).catch(e => {
-            console.error('[sing] Proxy also failed:', e);
-            if (isMounted) {
-              setIsLoadingAudio(false);
-              toast({ title: "Audio error", description: "Failed to load audio.", variant: "destructive" });
-            }
-          });
-        });
-    } else {
-      console.log('[sing] No audio source available');
-      setIsLoadingAudio(false);
-      return;
-    }
-    audio.preload = "auto";
-
-    const onLoadedMetadata = () => {
-      console.log('[sing] loadedmetadata fired, duration:', audio.duration);
+    const markReady = (reason: string) => {
+      console.log(`[sing] player ready via ${reason}, duration:`, audio.duration, 'readyState:', audio.readyState);
       if (!isMounted) return;
-      setDuration(audio.duration);
+      if (Number.isFinite(audio.duration) && audio.duration > 0) {
+        setDuration(audio.duration);
+      }
       setIsPlayerReady(true);
       setIsLoadingAudio(false);
     };
 
-    audio.addEventListener('canplay', () => console.log('[sing] canplay fired'));
+    const applyAudioBlob = (blob: Blob) => {
+      const playableBlob = blob.type === 'audio/mp4' ? blob : new Blob([blob], { type: 'audio/mp4' });
+      const blobUrl = URL.createObjectURL(playableBlob);
+      if (objectUrlToRevoke) URL.revokeObjectURL(objectUrlToRevoke);
+      objectUrlToRevoke = blobUrl;
+      audio.src = blobUrl;
+      audio.load();
+      if (audio.readyState >= HTMLMediaElement.HAVE_METADATA) markReady('blob-readyState');
+    };
+
+    audio.crossOrigin = "anonymous";
+    audio.preload = "auto";
+
+    const onLoadedMetadata = () => {
+      console.log('[sing] loadedmetadata fired, duration:', audio.duration);
+      markReady('loadedmetadata');
+    };
+
+    const onCanPlay = () => markReady('canplay');
+    audio.addEventListener('canplay', onCanPlay);
     audio.addEventListener('canplaythrough', () => console.log('[sing] canplaythrough fired'));
     audio.addEventListener('progress', () => {
       if (audio.buffered.length > 0) {
@@ -332,9 +303,53 @@ const Sing = () => {
     audio.addEventListener('ended', onEnded);
     audio.addEventListener('error', onError);
 
+    if (separatedAudio?.instrumentalUrl) {
+      audio.src = separatedAudio.instrumentalUrl;
+      audio.load();
+      if (audio.readyState >= HTMLMediaElement.HAVE_METADATA) markReady('separated-readyState');
+      console.log('[sing] Using AI-separated instrumental');
+    } else if (isTestPlayerMode && track?.audioUrl) {
+      console.log('[sing] Downloading original audio as blob for test player mode...');
+      fetch(track.audioUrl)
+        .then(r => {
+          if (!r.ok) throw new Error(`Direct audio fetch failed: ${r.status}`);
+          console.log('[sing] Audio fetch response:', r.status, r.headers.get('content-type'));
+          return r.blob();
+        })
+        .then(blob => {
+          if (!isMounted) return;
+          console.log('[sing] Audio blob ready:', Math.round(blob.size / 1024), 'KB, type:', blob.type);
+          applyAudioBlob(blob);
+        })
+        .catch(err => {
+          console.error('[sing] Audio download failed, trying proxy...', err);
+          if (!isMounted) return;
+          const proxyUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/proxy-audio?url=${encodeURIComponent(track.audioUrl)}`;
+          fetch(proxyUrl, {
+            headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
+          }).then(r => {
+            if (!r.ok) throw new Error(`Proxy audio fetch failed: ${r.status}`);
+            return r.blob();
+          }).then(blob => {
+            if (!isMounted) return;
+            console.log('[sing] Proxy blob ready:', Math.round(blob.size / 1024), 'KB');
+            applyAudioBlob(blob);
+          }).catch(e => {
+            console.error('[sing] Proxy also failed:', e);
+            if (isMounted) {
+              setIsLoadingAudio(false);
+              toast({ title: "Audio error", description: "Failed to load audio.", variant: "destructive" });
+            }
+          });
+        });
+    } else {
+      setIsLoadingAudio(false);
+    }
+
     return () => {
       isMounted = false;
       stopTimeSync();
+      audio.removeEventListener('canplay', onCanPlay);
       audio.removeEventListener('loadedmetadata', onLoadedMetadata);
       audio.removeEventListener('timeupdate', onTimeUpdate);
       audio.removeEventListener('play', onPlay);
@@ -343,10 +358,11 @@ const Sing = () => {
       audio.removeEventListener('error', onError);
       audio.pause();
       audio.src = '';
+      if (objectUrlToRevoke) URL.revokeObjectURL(objectUrlToRevoke);
       audioRef.current = null;
       stopAnalysis();
     };
-  }, [track?.audioUrl, toast, stopAnalysis, separatedAudio?.instrumentalUrl, isTestPlayerMode]);
+  }, [track?.audioUrl, toast, stopAnalysis, separatedAudio?.instrumentalUrl, isTestPlayerMode, session?.access_token]);
 
   // Setup vocals audio when separated audio is available
   useEffect(() => {
