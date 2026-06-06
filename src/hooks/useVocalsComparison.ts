@@ -356,47 +356,20 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
         // ── Per-frame pitch scoring ──
         if (referenceActive) {
           pitchFramesRef.current++;
-
-          if (!isVoiceDetected) {
-            // Reference singing, user silent → missed frame
-            missedFramesRef.current++;
-            // Accumulate 0 for this frame
-            pitchScoreAccRef.current += 0;
-          } else {
-            // Both singing — score in cents
-            const cents = centsDiff(userPitch, refPitch);
-            let frameScore: number;
-            if (cents <= PITCH_TOLERANCE_CENTS) {
-              // Within tolerance: full marks, scaled to how close
-              frameScore = 100 - (cents / PITCH_TOLERANCE_CENTS) * 20; // 80–100
-            } else if (cents <= PITCH_TOLERANCE_CENTS * 2) {
-              // Slightly off: partial marks
-              frameScore = 40 + (1 - (cents - PITCH_TOLERANCE_CENTS) / PITCH_TOLERANCE_CENTS) * 40; // 40–80
-            } else if (cents <= PITCH_TOLERANCE_CENTS * 4) {
-              // Quite off: low marks
-              frameScore = 10 + (1 - (cents - PITCH_TOLERANCE_CENTS * 2) / (PITCH_TOLERANCE_CENTS * 2)) * 30; // 10–40
-            } else {
-              // Way off or undetected pitch against singing ref
-              frameScore = 5;
-            }
-            pitchScoreAccRef.current += frameScore;
-          }
+          if (!isVoiceDetected) missedFramesRef.current++;
+          pitchScoreAccRef.current += scorePitchFrame(userPitch, refPitch, isVoiceDetected);
         }
 
         // ── Compute current scores ──
         const totalSingFrames = pitchFramesRef.current;
-
-        // Raw pitch: weighted average of frame scores
-        // Missed frames contribute 0, so they naturally bring the score down
         const rawPitch = totalSingFrames > 0
           ? pitchScoreAccRef.current / totalSingFrames
           : 0;
-
-        // Extra penalty for high missed-frame ratio
         const missRatio = totalSingFrames > 0
           ? missedFramesRef.current / totalSingFrames
           : 0;
-        const pitchWithMissPenalty = rawPitch * (1 - missRatio * 0.5);
+        const pitchWithMissPenalty = applyMissPenalty(rawPitch, missRatio);
+
 
         // Rhythm: recomputed from onset lists (cheap)
         const rawRhythm = computeRhythmScore();
