@@ -5,8 +5,22 @@ import {
   formatMicrophoneError,
   requestMicrophone,
 } from '@/lib/audioPermissions';
+import {
+  SILENCE_RMS,
+  rmsFloat,
+  dbEnergy,
+  detectPitchAC,
+  clamp100,
+  scoreRhythm,
+  scoreTechnique,
+  scorePitchFrame,
+  applyMissPenalty,
+} from '@/lib/vocalScoring';
+
+
 
 // ─── Types (identical interface to original — nothing else in the app breaks) ──
+
 
 interface VocalsComparisonMetrics {
   pitchMatch: number;       // 0–100
@@ -35,94 +49,10 @@ interface UseVocalsComparisonOptions {
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const FFT_SIZE = 2048;
-const SILENCE_RMS = 0.015;          // below this = silent frame
-const PITCH_TOLERANCE_CENTS = 60;   // ±60 cents = within ~half semitone
-const ONSET_WINDOW_MS = 180;        // onsets within 180ms = on time
 const HISTORY_FRAMES = 60;          // ~1 second of frames at 60fps
 const SCORE_SMOOTHING = 0.15;       // how fast displayed scores change (0=frozen,1=instant)
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/** RMS from Float32 time-domain samples */
-function rmsFloat(data: Float32Array): number {
-  let s = 0;
-  for (let i = 0; i < data.length; i++) s += data[i] * data[i];
-  return Math.sqrt(s / data.length);
-}
-
-/** Convert linear dB float array to 0–1 energy */
-function dbEnergy(data: Float32Array): number {
-  let s = 0, n = 0;
-  for (let i = 0; i < data.length; i++) {
-    const v = data[i];
-    if (!Number.isFinite(v)) continue;
-    s += Math.pow(10, v / 20);
-    n++;
-  }
-  return n > 0 ? Math.min(1, s / n) : 0;
-}
-
-/**
- * Autocorrelation pitch detection (YIN-inspired).
- * Far more accurate than peak-FFT-bin, handles harmonics correctly.
- * Returns Hz or 0 if silent/unpitched.
- */
-function detectPitchAC(samples: Float32Array, sampleRate: number): number {
-  const len = samples.length;
-
-  // Quick RMS gate
-  let rms = 0;
-  for (let i = 0; i < len; i++) rms += samples[i] * samples[i];
-  if (Math.sqrt(rms / len) < SILENCE_RMS) return 0;
-
-  // Search range: 60 Hz – 1050 Hz (covers all human vocal ranges)
-  const minLag = Math.floor(sampleRate / 1050);
-  const maxLag = Math.floor(sampleRate / 60);
-
-  // Normalised SDF (squared difference function) — YIN step 2
-  let bestLag = -1;
-  let bestVal = Infinity;
-
-  for (let lag = minLag; lag <= Math.min(maxLag, len - 1); lag++) {
-    let diff = 0;
-    for (let i = 0; i < len - lag; i++) {
-      const d = samples[i] - samples[i + lag];
-      diff += d * d;
-    }
-    // Normalise by cumulative mean
-    const norm = diff / (lag + 1);
-    if (norm < bestVal) {
-      bestVal = norm;
-      bestLag = lag;
-    }
-  }
-
-  // Reject if minimum SDF is too high (unpitched noise)
-  if (bestVal > 0.5 || bestLag < 0) return 0;
-
-  // Parabolic interpolation for sub-sample accuracy
-  if (bestLag > 0 && bestLag < len - 1) {
-    const prev = (bestLag - 1) / bestLag;
-    const next = (bestLag + 1) / (bestLag + 2);
-    const denom = 2 * bestVal - prev - next;
-    if (denom !== 0) {
-      bestLag += 0.5 * (next - prev) / denom;
-    }
-  }
-
-  return sampleRate / bestLag;
-}
-
-/** Hz → cents relative to reference. Returns Infinity if either is 0. */
-function centsDiff(hz1: number, hz2: number): number {
-  if (hz1 <= 0 || hz2 <= 0) return Infinity;
-  return Math.abs(1200 * Math.log2(hz1 / hz2));
-}
-
-/** Clamp a value to [0, 100] */
-function clamp100(v: number): number {
-  return Math.max(0, Math.min(100, v));
-}
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
@@ -277,61 +207,16 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
   // ─── Compute rhythm score from accumulated onsets ──────────────────────────
 
   const computeRhythmScore = useCallback((): number => {
-    const user = userOnsetsRef.current;
-    const ref = refOnsetsRef.current;
-    if (ref.length === 0) return 50; // no reference data yet
-    if (user.length === 0) return 0; // user never sang
-
-    const tol = ONSET_WINDOW_MS;
-    let matched = 0;
-    const usedIdx = new Set<number>();
-
-    for (const ro of ref) {
-      let best = Infinity;
-      let bestI = -1;
-      for (let i = 0; i < user.length; i++) {
-        if (usedIdx.has(i)) continue;
-        const d = Math.abs(user[i] - ro);
-        if (d < best) { best = d; bestI = i; }
-      }
-      if (best <= tol && bestI >= 0) {
-        // Scale: perfect hit = 1.0, edge of window = 0.5
-        matched += 1 - (best / tol) * 0.5;
-        usedIdx.add(bestI);
-      }
-    }
-
-    // Penalty for extra onsets (singing when shouldn't)
-    const extra = user.length - usedIdx.size;
-    const extraPenalty = Math.min(15, extra * 3);
-
-    const base = (matched / ref.length) * 100;
-    return clamp100(base - extraPenalty);
+    return scoreRhythm(userOnsetsRef.current, refOnsetsRef.current);
   }, []);
+
 
   // ─── Compute technique score from energy histories ─────────────────────────
 
   const computeTechniqueScore = useCallback((): number => {
-    const ue = userEnergyHistRef.current;
-    const re = refEnergyHistRef.current;
-    if (ue.length < 5 || re.length < 5) return 50;
-
-    // Sustain: fraction of ref-active frames where user was also active
-    const refActive = re.filter(v => v > SILENCE_RMS).length;
-    const userActive = ue.filter(v => v > SILENCE_RMS).length;
-    const sustainRatio = refActive > 0 ? Math.min(1, userActive / refActive) : 1;
-
-    // Breath smoothness: penalise sudden energy drops mid-phrase
-    let smooth = 0;
-    for (let i = 1; i < ue.length; i++) {
-      const delta = Math.abs(ue[i] - ue[i - 1]);
-      const rel = ue[i - 1] > 0 ? delta / ue[i - 1] : 1;
-      smooth += rel < 0.4 ? 1 : 0;
-    }
-    const smoothRatio = smooth / (ue.length - 1);
-
-    return clamp100((sustainRatio * 0.6 + smoothRatio * 0.4) * 100);
+    return scoreTechnique(userEnergyHistRef.current, refEnergyHistRef.current);
   }, []);
+
 
   // ─── Main analysis loop ────────────────────────────────────────────────────
 
@@ -470,47 +355,20 @@ export function useVocalsComparison(options: UseVocalsComparisonOptions = {}) {
         // ── Per-frame pitch scoring ──
         if (referenceActive) {
           pitchFramesRef.current++;
-
-          if (!isVoiceDetected) {
-            // Reference singing, user silent → missed frame
-            missedFramesRef.current++;
-            // Accumulate 0 for this frame
-            pitchScoreAccRef.current += 0;
-          } else {
-            // Both singing — score in cents
-            const cents = centsDiff(userPitch, refPitch);
-            let frameScore: number;
-            if (cents <= PITCH_TOLERANCE_CENTS) {
-              // Within tolerance: full marks, scaled to how close
-              frameScore = 100 - (cents / PITCH_TOLERANCE_CENTS) * 20; // 80–100
-            } else if (cents <= PITCH_TOLERANCE_CENTS * 2) {
-              // Slightly off: partial marks
-              frameScore = 40 + (1 - (cents - PITCH_TOLERANCE_CENTS) / PITCH_TOLERANCE_CENTS) * 40; // 40–80
-            } else if (cents <= PITCH_TOLERANCE_CENTS * 4) {
-              // Quite off: low marks
-              frameScore = 10 + (1 - (cents - PITCH_TOLERANCE_CENTS * 2) / (PITCH_TOLERANCE_CENTS * 2)) * 30; // 10–40
-            } else {
-              // Way off or undetected pitch against singing ref
-              frameScore = 5;
-            }
-            pitchScoreAccRef.current += frameScore;
-          }
+          if (!isVoiceDetected) missedFramesRef.current++;
+          pitchScoreAccRef.current += scorePitchFrame(userPitch, refPitch, isVoiceDetected);
         }
 
         // ── Compute current scores ──
         const totalSingFrames = pitchFramesRef.current;
-
-        // Raw pitch: weighted average of frame scores
-        // Missed frames contribute 0, so they naturally bring the score down
         const rawPitch = totalSingFrames > 0
           ? pitchScoreAccRef.current / totalSingFrames
           : 0;
-
-        // Extra penalty for high missed-frame ratio
         const missRatio = totalSingFrames > 0
           ? missedFramesRef.current / totalSingFrames
           : 0;
-        const pitchWithMissPenalty = rawPitch * (1 - missRatio * 0.5);
+        const pitchWithMissPenalty = applyMissPenalty(rawPitch, missRatio);
+
 
         // Rhythm: recomputed from onset lists (cheap)
         const rawRhythm = computeRhythmScore();
