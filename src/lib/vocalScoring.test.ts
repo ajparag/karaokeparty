@@ -106,11 +106,13 @@ describe('scoreRhythm', () => {
     const ref = [100, 500, 900, 1300];
     expect(scoreRhythm(ref.slice(), ref)).toBe(100);
   });
-  it('drops to ~75 when every onset is at the tolerance edge', () => {
+  it('drops to 50 when every onset is at the tolerance edge', () => {
+    // matched contribution per onset = 1 - (180/180)*0.5 = 0.5
     const ref = [100, 500, 900, 1300];
     const user = ref.map((t) => t + 180);
-    expect(scoreRhythm(user, ref)).toBeCloseTo(75, 0);
+    expect(scoreRhythm(user, ref)).toBe(50);
   });
+
   it('returns 0 when all onsets are well outside tolerance', () => {
     const ref = [100, 500, 900];
     const user = [10_000, 10_500, 10_900];
