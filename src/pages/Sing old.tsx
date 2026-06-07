@@ -280,7 +280,7 @@ const Sing = () => {
       if (isMounted) {
         setIsPlaying(false);
         stopTimeSync();
-        setShowResults(true);
+        if (!preEndTriggeredRef.current) setShowResults(true);
       }
     };
 
