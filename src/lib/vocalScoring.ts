@@ -3,7 +3,7 @@
 
 export const SILENCE_RMS = 0.015;
 export const PITCH_TOLERANCE_CENTS = 60;
-export const ONSET_WINDOW_MS = 180;
+export const ONSET_WINDOW_MS = 300; // was 180
 
 /** RMS from Float32 time-domain samples. */
 export function rmsFloat(data: Float32Array): number {
