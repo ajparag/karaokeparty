@@ -1,3 +1,21 @@
+// =============================================================================
+// CHANGELOG
+// =============================================================================
+// v1 (original) — Basic vocal separation via Modal API
+//
+// v2 — Parallel warmup + download
+//   - Previously: download audio → await warmup → upload (warmup blocked upload)
+//   - Fix: Promise.all([getAudioBlob, warmUpHFSpace]) — truly parallel
+//   - Saves up to 30s when Modal container is cold
+//
+// v3 — CURRENT: Full per-step timing diagnostics added
+//   - Every step now logs ms elapsed since separation started
+//   - Steps timed: cache check, audio download, warmup, upload,
+//     predict queue, SSE wait, stem download, IndexedDB save
+//   - Total time broken down by phase in final log
+//   - warmUpHFSpace logs its own timing independently
+// =============================================================================
+
 import { useState, useCallback, useRef } from 'react';
 import { getCachedTracks, saveCachedTracks, clearOldCache } from '@/lib/audioCache';
 
@@ -173,8 +191,12 @@ export function useVocalSeparation() {
       clearOldCache(7).catch(console.error);
 
       // IndexedDB cache check
+      const cacheCheckStart = Date.now();
+      console.log('[TIMING] Checking IndexedDB cache...');
       const cached = await getCachedTracks(cacheKey);
+      console.log(`[TIMING] Cache check done in ${Date.now() - cacheCheckStart}ms — hit: ${!!cached}`);
       if (cached) {
+        const cacheLoadStart = Date.now();
         setProgress('Loading from cache...');
         const instrumentalUrl = URL.createObjectURL(cached.instrumentalBlob);
         const vocalsUrl = cached.vocalsBlob ? URL.createObjectURL(cached.vocalsBlob) : undefined;
@@ -182,20 +204,24 @@ export function useVocalSeparation() {
         setSeparatedAudio(result);
         setProgress('');
         setIsProcessing(false);
+        console.log(`[TIMING] ✅ Loaded from cache in ${Date.now() - cacheLoadStart}ms`);
         resolveSharedSeparation(result);
         return result;
       }
 
       const separationStartTime = Date.now();
+      const t = () => `+${Date.now() - separationStartTime}ms`;
+      console.log(`[TIMING] ⏱ Separation started`);
       setProgress('Preparing audio...');
 
-      // FIX: Start warmup AND audio download simultaneously — don't await warmup before uploading.
-      // Previously: download → await warmup → upload (warmup added up to 30s of dead wait)
-      // Now: download + warmup in parallel → upload immediately when blob is ready
+      // Download audio + warm Modal container in parallel
+      console.log(`[TIMING] ${t()} Starting audio download + Modal warmup in parallel`);
+      const downloadStart = Date.now();
       const [audioBlob] = await Promise.all([
         getAudioBlob(audioUrl),
-        warmUpHFSpace().catch(() => {}), // non-blocking; container may already be warm
+        warmUpHFSpace().catch(() => {}),
       ]);
+      console.log(`[TIMING] ${t()} Audio download done: ${Math.round(audioBlob.size / 1024)}KB in ${Date.now() - downloadStart}ms`);
 
       const urlExt = audioUrl.split('?')[0].split('.').pop();
       const ext = (urlExt || 'm4a').toLowerCase();
@@ -214,6 +240,7 @@ export function useVocalSeparation() {
       // 1. Upload audio
       setProgress('Uploading audio...');
       const uploadStart = Date.now();
+      console.log(`[TIMING] ${t()} Uploading audio (${Math.round(audioBlob.size/1024)}KB, type=${audioFile.type})...`);
       const fd = new FormData();
       fd.append('files', audioFile, fileName);
       const uploadResp = await fetch(`${base}/gradio_api/upload`, { method: 'POST', body: fd });
@@ -221,7 +248,7 @@ export function useVocalSeparation() {
       const uploadJson = (await uploadResp.json()) as string[];
       const serverPath = uploadJson?.[0];
       if (!serverPath) throw new Error('Upload returned no path');
-      console.log('[VocalSeparation] Uploaded in', Date.now() - uploadStart, 'ms ->', serverPath);
+      console.log(`[TIMING] ${t()} Upload done in ${Date.now() - uploadStart}ms → ${serverPath}`);
 
       // 2. Queue prediction
       setProgress('AI vocal separation in progress...');
@@ -233,6 +260,7 @@ export function useVocalSeparation() {
       };
 
       const predictStart = Date.now();
+      console.log(`[TIMING] ${t()} Queueing prediction on Modal GPU...`);
       const callResp = await fetch(`${base}/gradio_api/call/predict`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -242,7 +270,8 @@ export function useVocalSeparation() {
       const callJson = await callResp.json();
       const eventId = callJson?.event_id;
       if (!eventId) throw new Error('No event_id from predict call');
-      console.log('[VocalSeparation] Predict queued, event_id:', eventId);
+      console.log(`[TIMING] ${t()} Prediction queued in ${Date.now() - predictStart}ms, event_id: ${eventId}`);
+      const gpuStart = Date.now();
 
       // 3. Stream SSE result
       const PREDICT_TIMEOUT = 4 * 60 * 1000;
@@ -286,7 +315,11 @@ export function useVocalSeparation() {
         clearTimeout(sseTimeout);
       }
 
-      console.log('[VocalSeparation] Predict complete in', Math.round((Date.now() - predictStart) / 1000), 's');
+      const gpuMs = Date.now() - gpuStart;
+      const totalPredictMs = Date.now() - predictStart;
+      console.log(`[TIMING] ${t()} GPU separation done:`);
+      console.log(`[TIMING]   GPU processing time : ${Math.round(gpuMs / 1000)}s (${gpuMs}ms)`);
+      console.log(`[TIMING]   Queue + GPU total   : ${Math.round(totalPredictMs / 1000)}s`);
       if (!data) throw new Error('No data received from server');
 
       const { instrumentalUrl: instUrl, vocalsUrl: vocUrl } = parseHFResult(data, true);
@@ -294,6 +327,8 @@ export function useVocalSeparation() {
       if (!finalInstUrl) throw new Error('No instrumental URL found');
 
       setProgress('Downloading separated tracks...');
+      const stemDownloadStart = Date.now();
+      console.log(`[TIMING] ${t()} Downloading separated stems...`);
 
       const [instrumentalBlob, vocalsBlob] = await Promise.all([
         downloadTrack(finalInstUrl, 'instrumental'),
@@ -302,11 +337,22 @@ export function useVocalSeparation() {
           return undefined;
         }) : Promise.resolve(undefined),
       ]);
+      console.log(`[TIMING] ${t()} Stems downloaded in ${Date.now() - stemDownloadStart}ms`);
+      console.log(`[TIMING]   Instrumental: ${Math.round((instrumentalBlob?.size ?? 0) / 1024)}KB`);
+      console.log(`[TIMING]   Vocals:       ${Math.round((vocalsBlob?.size ?? 0) / 1024)}KB`);
 
       const instrumentalObjUrl = URL.createObjectURL(instrumentalBlob);
       const vocalsObjUrl = vocalsBlob ? URL.createObjectURL(vocalsBlob) : undefined;
 
-      console.log('[VocalSeparation] Total time:', Math.round((Date.now() - separationStartTime) / 1000), 's');
+      const totalMs = Date.now() - separationStartTime;
+      console.log(`[TIMING] ✅ SEPARATION COMPLETE — total: ${Math.round(totalMs / 1000)}s`);
+      console.log(`[TIMING] ─────────────────────────────────────────`);
+      console.log(`[TIMING]   Download + warmup (parallel) : ${Date.now() - separationStartTime - (Date.now() - uploadStart)}ms (estimated)`);
+      console.log(`[TIMING]   Upload to Modal              : see above`);
+      console.log(`[TIMING]   GPU separation               : see above`);
+      console.log(`[TIMING]   Stem download                : see above`);
+      console.log(`[TIMING]   Total wall time              : ${totalMs}ms (${Math.round(totalMs/1000)}s)`);
+      console.log(`[TIMING] ─────────────────────────────────────────`);
 
       const separationResult: SeparationResult = {
         instrumentalUrl: instrumentalObjUrl,
@@ -318,8 +364,9 @@ export function useVocalSeparation() {
       setProgress('');
       setIsProcessing(false);
 
+      const saveStart = Date.now();
       saveCachedTracks(cacheKey, instrumentalBlob, vocalsBlob)
-        .then(() => console.log('[VocalSeparation] Cached tracks saved'))
+        .then(() => console.log(`[TIMING] IndexedDB save done in ${Date.now() - saveStart}ms`))
         .catch((err) => console.error('[VocalSeparation] Failed to cache:', err));
 
       resolveSharedSeparation(separationResult);
